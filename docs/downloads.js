@@ -13,19 +13,10 @@
   var OS_ORDER = ['mac', 'win', 'linux']
   var OS_LABEL = { mac: 'macOS', win: 'Windows', linux: 'Linux' }
 
-  // What a build that isn't notarized (macOS) or signed (Windows) makes the OS say on first
-  // launch, and the way past it: under the
-  // download button for the visitor's own OS, and with every other OS's downloads.
-  // `code` in backticks, **button names** in stars.
-  var MAC_COMMAND = 'xattr -dr com.apple.quarantine /Applications/Plexo.app'
+  // What an installer that isn't code-signed (Windows) makes the OS say on first launch, and the
+  // way past it: under the download button for the visitor's own OS, and with every other OS's
+  // downloads. `code` in backticks, **button names** in stars.
   var FIRST_LAUNCH = {
-    mac: {
-      system: 'macOS',
-      warning: 'Apple cannot check “Plexo” for malicious software',
-      fix: 'Plexo is signed, just not notarized by Apple yet. Click **Done**, choose **Open Anyway** in System Settings → Privacy & Security, and open it again. Or drag Plexo into **Applications**, then run this once in **Terminal**:',
-      command: MAC_COMMAND,
-      aside: null
-    },
     win: {
       system: 'Windows',
       warning: 'Windows protected your PC',
@@ -303,12 +294,6 @@
       out.push('')
     })
     out.push(
-      '**macOS says Apple cannot check Plexo?** Plexo is signed, just not notarized by Apple yet. ' +
-        'Click Done, choose Open Anyway in System Settings → Privacy & Security, and open it again. ' +
-        'Or move it to Applications, run `' +
-        MAC_COMMAND +
-        '` in Terminal, and open it again.',
-      '',
       '**Windows protected your PC?** Click More info, then Run anyway.',
       '',
       'Step by step, and what Linux needs: ' + siteUrl + '#downloads'

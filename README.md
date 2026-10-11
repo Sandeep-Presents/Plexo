@@ -10,10 +10,7 @@ https://github.com/user-attachments/assets/e57728f4-fb63-441f-839c-174eef954b17
 
 Get the installer for your computer from [getplexo.app](https://getplexo.app/#downloads), or pick a file from [GitHub Releases](https://github.com/anmolkapil/plexo/releases). Builds are available for macOS (Apple silicon and Intel), Windows 10 and 11 (x64 and ARM64), and Linux (AppImage and `.deb`, x86_64 and ARM64).
 
-The first launch needs one extra step:
-
-- **macOS** says "Apple cannot check 'Plexo' for malicious software": click **Done**, then open **System Settings → Privacy & Security** and click **Open Anyway**. The Mac app is signed with an Apple Developer ID (see [Credits](#credits)) but not yet notarized by Apple. Or move it to Applications, run `xattr -dr com.apple.quarantine /Applications/Plexo.app` in Terminal, and open it again.
-- **Windows** shows "Windows protected your PC": click **More info**, then **Run anyway**. The installer isn't code-signed yet.
+The Mac app is signed with an Apple Developer ID (see [Credits](#credits)) and notarized by Apple, so it opens like any other app. On Windows, the first launch needs one extra step: when it shows "Windows protected your PC", click **More info**, then **Run anyway**. The installer isn't code-signed yet.
 
 Plexo updates itself after that: new versions download in the background and install when you restart.
 
