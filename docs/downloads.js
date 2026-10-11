@@ -229,6 +229,8 @@
 
     var chosen = choose(assets, env || { os: 'other', arch: null })
     var primary = chosen && chosen.primary
+    // Only a build we know fits is recommended. Without the CPU, an arm64 or x64 build is a guess.
+    var known = primary && (env.arch || primary.arch === 'any') ? primary : null
 
     var groups = OS_ORDER.map(function (os) {
       var rows = assets
@@ -239,7 +241,7 @@
           return a.sort - b.sort
         })
         .map(function (a) {
-          a.recommended = a === primary
+          a.recommended = a === known
           return a
         })
       return {

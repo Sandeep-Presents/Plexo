@@ -238,7 +238,7 @@ test.describe('which download is offered', () => {
     expect(D.build({ assets: [] }, { os: 'win', arch: null }).empty).toBe(true)
   })
 
-  test('grouped by OS, in a fixed order, exactly one row recommended', () => {
+  test('grouped by OS, in a fixed order, one row recommended unless the CPU is a guess', () => {
     const model = D.build(release(), { os: 'linux', arch: 'x64' })
     expect(model.groups.map((g) => `${g.label}:${g.rows.length}`)).toEqual([
       'macOS:2',
@@ -252,6 +252,8 @@ test.describe('which download is offered', () => {
       'plexo_1.0.0-rc.7_arm64.deb'
     ])
     expect(model.groups.flatMap((g) => g.rows).filter((r) => r.recommended)).toHaveLength(1)
+    const guessed = D.build(release(), { os: 'mac', arch: null })
+    expect(guessed.groups.flatMap((g) => g.rows).filter((r) => r.recommended)).toHaveLength(0)
     for (const group of model.groups) expect(group.notes.length).toBeGreaterThan(0)
   })
 
