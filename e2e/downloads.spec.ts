@@ -385,9 +385,7 @@ test.describe('the download page', () => {
     try {
       await page.getByRole('tab', { name: 'macOS' }).click()
       const mac = page.getByRole('tabpanel', { name: 'macOS' })
-      await mac.locator('summary').click()
-      await expect(mac).toContainText('notarized by Apple')
-      await expect(mac).not.toContainText('Open Anyway')
+      await expect(mac.locator('.install-help')).toHaveCount(0)
       await page.getByRole('tab', { name: 'Windows' }).click()
       await page.getByRole('tabpanel', { name: 'Windows' }).locator('summary').click()
       await expect(page.getByRole('tabpanel', { name: 'Windows' })).toContainText('Run anyway')
@@ -443,7 +441,8 @@ test.describe('the download page', () => {
         'href',
         'https://github.com/anmolkapil/plexo/releases'
       )
-      for (const os of ['macOS', 'Windows', 'Linux']) {
+      await expect(page.locator('#panel-mac .install-help')).toHaveCount(0)
+      for (const os of ['Windows', 'Linux']) {
         await page.getByRole('tab', { name: os }).click()
         const panel = page.getByRole('tabpanel', { name: os })
         await panel.locator('summary').click()
@@ -466,16 +465,16 @@ test.describe('the download page', () => {
           }
         })
       })
-      await page.locator('#panel-mac summary').click()
-      const button = page.locator('#panel-mac .copy-command')
-      const status = page.locator('#panel-mac .command-status')
+      await page.locator('#panel-linux summary').click()
+      const button = page.locator('#panel-linux .copy-command').first()
+      const status = page.locator('#panel-linux .command-status').first()
       await button.click({ trial: true })
       const width = (await button.boundingBox())?.width
       await button.click()
       await expect(button).toHaveText('Copied')
       expect((await button.boundingBox())?.width).toBe(width)
       expect(await page.locator('body').getAttribute('data-copied-command')).toBe(
-        await page.locator('#panel-mac code').textContent()
+        await page.locator('#panel-linux code').first().textContent()
       )
       await expect(status).toHaveAttribute('role', 'status')
       await expect(status).toHaveText('Command copied to clipboard.')
@@ -492,7 +491,7 @@ test.describe('the download page', () => {
   test('failed or unavailable clipboard access offers manual copying', async () => {
     const { page, close } = await openPage(BROWSERS.chromeMac)
     try {
-      await page.locator('#panel-mac summary').click()
+      await page.locator('#panel-linux summary').click()
       for (const unavailable of [false, true]) {
         await page.evaluate((missing) => {
           Object.defineProperty(navigator, 'clipboard', {
@@ -506,12 +505,12 @@ test.describe('the download page', () => {
                 }
           })
         }, unavailable)
-        await page.locator('#panel-mac .copy-command').click()
-        const status = page.locator('#panel-mac .command-status')
+        await page.locator('#panel-linux .copy-command').first().click()
+        const status = page.locator('#panel-linux .command-status').first()
         await expect(status).toBeVisible()
         await expect(status).not.toHaveClass(/sr-only/)
         await expect(status).toHaveText('Couldn’t copy. Select the command and copy it manually.')
-        await expect(page.locator('#panel-mac .copy-command')).toHaveText('Copy')
+        await expect(page.locator('#panel-linux .copy-command').first()).toHaveText('Copy')
       }
     } finally {
       await close()

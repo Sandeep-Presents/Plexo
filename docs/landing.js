@@ -76,15 +76,6 @@
   window.requestAnimationFrame(fitDemoToViewport)
 
   const installGuides = {
-    mac: {
-      title: 'Installing Plexo on macOS',
-      why: 'Plexo is signed with an Apple Developer ID and notarized by Apple, so it opens like any other app.',
-      steps: [
-        ['Open the .dmg and drag **Plexo** into your **Applications** folder.'],
-        ['Open Plexo from **Applications**.']
-      ],
-      fix: null
-    },
     win: {
       title: 'Installing Plexo on Windows',
       why: 'Plexo isn’t code-signed yet, so your browser and Windows SmartScreen may warn you before it installs.',
@@ -258,6 +249,8 @@
   }
   function renderInstallGuide(os) {
     const guide = installGuides[os]
+    // The Mac app is notarized, so it opens like any other app and needs no guide.
+    if (!guide) return document.createDocumentFragment()
     const details = element('details', 'install-help')
     const summary = document.createElement('summary')
     const icon = element('span', 'install-help-icon')
