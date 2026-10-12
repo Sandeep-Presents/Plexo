@@ -36,7 +36,7 @@
 
   const revealTargets = Array.from(
     document.querySelectorAll(
-      '#features .section-heading, #features .cells > *, #downloads .section-heading, #downloads .download-box, #faq > div > div:first-child, #faq .faq-item, #support > div:first-child, #support .cells > *, footer .giant'
+      '#features .section-heading, #features .cells > *, #downloads .section-heading, #downloads .download-box, #downloads .ext-box, #faq > div > div:first-child, #faq .faq-item, #support > div:first-child, #support .cells > *, footer .giant'
     )
   )
   document.documentElement.classList.add('motion-ready')
