@@ -210,25 +210,37 @@ a {
   flex-wrap: wrap;
   align-items: center;
   justify-content: center;
-  gap: 6px 14px;
+  gap: 6px 16px;
   margin: 0;
   padding: 12px 16px;
   border-bottom: 1px solid rgba(243, 103, 18, 0.28);
   background: #160c06;
-  font-size: 14px;
+  font-size: 15px;
   font-weight: 500;
   text-align: center;
 }
-.announce span {
-  padding-right: 14px;
-  border-right: 1px solid rgba(255, 255, 255, 0.16);
+.announce-tag {
+  padding: 3px 12px;
+  border-radius: 999px;
+  background: #f36712;
+  color: #1a0a02;
   font:
-    11px 'Geist Mono',
+    600 12px 'Geist Mono',
     ui-monospace,
     monospace;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
+}
+.announce-cta {
   color: #ffb98c;
+}
+.announce-cta span {
+  display: inline-block;
+  margin-left: 4px;
+  transition: transform 0.2s ease;
+}
+a.announce:hover .announce-cta span {
+  transform: translateX(3px);
 }
 .top-glow {
   position: absolute;
