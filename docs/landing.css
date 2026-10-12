@@ -1968,6 +1968,17 @@ a.announce:hover {
   background: linear-gradient(180deg, #f2711f, #dd5a0c 55%, #c94a06);
   color: #fff;
 }
+.ext-soon {
+  flex: none;
+  padding: 0 4px;
+  color: #8c8c94;
+  font:
+    500 12px 'Geist Mono',
+    ui-monospace,
+    monospace;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
 @media (max-width: 1008px) {
   .ext-cards {
     grid-template-columns: minmax(0, 1fr);
