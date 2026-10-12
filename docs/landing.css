@@ -1838,3 +1838,145 @@ a:focus-visible {
     transition: none !important;
   }
 }
+a.announce {
+  color: inherit;
+  transition: background 0.2s;
+}
+a.announce:hover {
+  background: #1f1008;
+}
+.ext-box {
+  max-width: 1200px;
+  margin: 48px auto 0;
+  padding: 40px 48px 48px;
+  border: 1px solid #ffffff14;
+  border-radius: 32px;
+  background:
+    radial-gradient(520px 260px at 0 0, rgba(243, 103, 18, 0.12), transparent 70%), #111113;
+  text-align: left;
+}
+.ext-box h3 {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  margin: 0;
+  font:
+    600 clamp(24px, 3vw, 36px)/1.1 'Archivo',
+    sans-serif;
+  font-stretch: 118%;
+  letter-spacing: -0.01em;
+  text-transform: uppercase;
+}
+.ext-new {
+  padding: 4px 12px;
+  border-radius: 999px;
+  background: #f36712;
+  color: #1a0a02;
+  font:
+    600 12px 'Geist Mono',
+    ui-monospace,
+    monospace;
+  letter-spacing: 0.1em;
+}
+.ext-box > p {
+  margin: 14px 0 0;
+  color: #c8c8ce;
+  font-size: 16px;
+}
+.ext-cards {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 24px;
+  margin-top: 32px;
+}
+.ext-card {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 24px 28px 24px 32px;
+  border: 1px solid #ffffff14;
+  border-radius: 20px;
+  background: #18181a;
+}
+.ext-icon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 56px;
+  height: 56px;
+  border-radius: 14px;
+  background: #222225;
+}
+.ext-icon svg {
+  width: 26px;
+  height: 26px;
+  fill: none;
+  stroke: #ededef;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.ext-name {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.ext-name strong {
+  font-size: 20px;
+  font-weight: 600;
+}
+.ext-name span {
+  color: #8c8c94;
+  font-size: 14px;
+  line-height: 1.4;
+}
+.ext-btn {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  min-height: 52px;
+  padding: 0 28px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.03);
+  color: #ededef;
+  font-size: 16px;
+  font-weight: 600;
+  transition:
+    background 0.2s,
+    border-color 0.2s,
+    transform 0.2s;
+}
+.ext-btn:hover {
+  border-color: rgba(255, 255, 255, 0.3);
+  background: rgba(255, 255, 255, 0.07);
+  transform: translateY(-1px);
+}
+.ext-btn.ext-btn-primary {
+  background: linear-gradient(180deg, #f2711f, #dd5a0c 55%, #c94a06);
+  color: #fff;
+}
+@media (max-width: 1008px) {
+  .ext-cards {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+@media (max-width: 640px) {
+  .ext-box {
+    margin-top: 40px;
+    padding: 28px 20px;
+    border-radius: 28px;
+  }
+  .ext-card {
+    flex-wrap: wrap;
+    gap: 16px;
+    padding: 20px;
+  }
+  .ext-btn {
+    width: 100%;
+  }
+}
