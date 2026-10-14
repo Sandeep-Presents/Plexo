@@ -202,6 +202,45 @@ test.describe('NZB downloads', () => {
     await plexo.waitForNzbStatus('completed', 30_000)
   })
 
+  test('a wrong password is put right from the failed download, then it starts again', async ({
+    plexo,
+    dirs
+  }) => {
+    const server = await newsServer({ username: 'reader', password: 'right' })
+    await useServer(plexo, server, { username: 'reader', password: 'wrong' })
+    const nzb = await nzbOnDisk(server)
+    await plexo.start(nzb, server.expectedSha())
+    const failed = await plexo.waitForNzbStatus('error', 30_000)
+    plexo.tracked.delete(failed.id)
+
+    const { page } = plexo
+    await page.getByText('Test.Release', { exact: true }).first().click()
+    await page.getByRole('button', { name: /^Usenet server 127\.0\.0\.1/ }).click()
+    const dialog = page.getByRole('dialog', { name: 'Usenet server' })
+    await expect(dialog.getByLabel('Password')).toHaveAttribute('placeholder', 'Saved')
+    await dialog.getByLabel('Password').fill('right')
+    await dialog.getByRole('button', { name: 'Save' }).click()
+    await expect(dialog).toBeHidden()
+
+    // Nothing of it came in, so it starts over from its NZB, as any such download does.
+    await page.getByRole('button', { name: 'Download again' }).click()
+    await expect(page.getByRole('textbox', { name: 'Link' })).toHaveValue(nzb)
+    // Saved where the test looks, as the folder picker would choose it.
+    await plexo.evaluateMain(({ dialog }, dest) => {
+      dialog.showOpenDialog = (async () => ({ canceled: false, filePaths: [dest] })) as never
+    }, dirs.dest)
+    await page
+      .getByText('Save to', { exact: true })
+      .locator('..')
+      .getByRole('button', { name: 'Change' })
+      .click()
+    // The failed one is gone by now: the new one is what the folder gains.
+    await plexo.expectNextDownload(server.expectedSha())
+    await expect(page.getByText('127.0.0.1', { exact: false }).first()).toBeVisible()
+    await page.getByRole('button', { name: 'Download', exact: true }).click()
+    await plexo.waitForNzbStatus('completed', 30_000)
+  })
+
   test('never more connections than the account allows', async ({ plexo }) => {
     const server = await newsServer({ maxConnections: 2, delayMs: 5 })
     // Set to more than the account has: the server turns the rest away.

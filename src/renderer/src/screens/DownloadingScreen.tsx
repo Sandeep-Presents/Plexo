@@ -13,6 +13,7 @@ import { TorrentFiles } from '../components/TorrentFiles'
 import { TorrentBadge } from '../components/TorrentBadge'
 import { TruncatedText } from '../components/TruncatedText'
 import { UsenetBadge } from '../components/UsenetBadge'
+import { UsenetServerButton } from '../components/UsenetServerDialog'
 import { Button } from '../components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../components/ui/tooltip'
 import { useNetworkVisuals } from '../hooks/useNetworkVisuals'
@@ -363,6 +364,8 @@ export const DownloadingScreen = memo(function DownloadingScreen({
                   <span>
                     {describeFileCount(download.nzbFiles.length, download.nzbFiles.length)}
                   </span>
+                  <Dot />
+                  <UsenetServerButton host={download.server} />
                 </>
               )}
               {missingArticles > 0 && (

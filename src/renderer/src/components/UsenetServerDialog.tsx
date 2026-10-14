@@ -1,5 +1,5 @@
 import type { UsenetServer, UsenetServerInput } from '@shared/types'
-import { AlertTriangle, Check } from 'lucide-react'
+import { AlertTriangle, Check, Server } from 'lucide-react'
 import { useId, useState } from 'react'
 import { describeError } from '../utils/format'
 import { Button } from './ui/button'
@@ -40,6 +40,35 @@ export function UsenetServerDialog({
         )}
       </DialogContent>
     </Dialog>
+  )
+}
+
+/** An NZB download's news server, by name, opening its settings: where a wrong password is put
+ * right without an NZB to hand. */
+export function UsenetServerButton({ host }: { host: string }): React.JSX.Element {
+  const [server, setServer] = useState<UsenetServer | null>(null)
+  const [open, setOpen] = useState(false)
+  return (
+    <>
+      <Button
+        type="button"
+        variant="outline"
+        size="xs"
+        aria-label={`Usenet server ${host}: change settings`}
+        onClick={() => {
+          void window.plexo
+            .usenetServer()
+            .then(setServer)
+            .catch(() => setServer(null))
+            .finally(() => setOpen(true))
+        }}
+        className="h-auto cursor-default gap-1 rounded-[4px] border-[0.5px] bg-card px-[7px] py-[3px] font-mono text-[10.5px] leading-none font-medium text-[var(--text-secondary)] dark:bg-card"
+      >
+        <Server aria-hidden className="size-3" />
+        {host}
+      </Button>
+      <UsenetServerDialog open={open} server={server} onOpenChange={setOpen} onSaved={setServer} />
+    </>
   )
 }
 

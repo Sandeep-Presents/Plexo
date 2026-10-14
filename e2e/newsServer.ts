@@ -59,13 +59,16 @@ export interface ServedArticle {
 
 const LINE = 128
 
-/** yEnc: every byte plus 42, the critical ones escaped (RFC-less, but every poster does this). */
-export function yencLines(data: Buffer): Buffer[] {
-  const lines: Buffer[] = []
-  let line: number[] = []
+/** yEnc lines of `data`, each ended by CRLF: every byte plus 42, the critical ones escaped (no
+ * RFC, but every poster does this). Written straight into one buffer: a test may post gigabytes. */
+export function yencEncode(data: Buffer): Buffer {
+  // At worst every byte escaped, plus a CRLF for every line.
+  const out = Buffer.allocUnsafe(data.length * 2 + Math.ceil((data.length * 2) / LINE) * 2 + 2)
+  let length = 0
+  let column = 0
   for (let i = 0; i < data.length; i++) {
     const byte = (data[i] + 42) & 0xff
-    const atEdge = line.length === 0 || line.length >= LINE - 1 || i === data.length - 1
+    const atEdge = column === 0 || column >= LINE - 1 || i === data.length - 1
     // NUL, LF, CR and '=' always; a leading or trailing space or tab, and a leading dot.
     if (
       byte === 0x00 ||
@@ -73,19 +76,26 @@ export function yencLines(data: Buffer): Buffer[] {
       byte === 0x0d ||
       byte === 0x3d ||
       (atEdge && (byte === 0x20 || byte === 0x09)) ||
-      (line.length === 0 && byte === 0x2e)
+      (column === 0 && byte === 0x2e)
     ) {
-      line.push(0x3d, (byte + 64) & 0xff)
+      out[length++] = 0x3d
+      out[length++] = (byte + 64) & 0xff
+      column += 2
     } else {
-      line.push(byte)
+      out[length++] = byte
+      column++
     }
-    if (line.length >= LINE) {
-      lines.push(Buffer.from(line))
-      line = []
+    if (column >= LINE) {
+      out[length++] = 0x0d
+      out[length++] = 0x0a
+      column = 0
     }
   }
-  if (line.length > 0) lines.push(Buffer.from(line))
-  return lines
+  if (column > 0) {
+    out[length++] = 0x0d
+    out[length++] = 0x0a
+  }
+  return out.subarray(0, length)
 }
 
 function post(files: NewsFile[], articleBytes: number): Article[] {
@@ -100,13 +110,11 @@ function post(files: NewsFile[], articleBytes: number): Article[] {
         `=ypart begin=${begin + 1} end=${begin + data.length}`
       ]
       const trailer = `=yend size=${data.length} part=${part} pcrc32=${(crc32(data) >>> 0).toString(16).padStart(8, '0')}`
-      const body = Buffer.concat(
-        [
-          ...header.map((text) => Buffer.from(text)),
-          ...yencLines(data),
-          Buffer.from(trailer)
-        ].flatMap((line) => [line, Buffer.from('\r\n')])
-      )
+      const body = Buffer.concat([
+        Buffer.from(`${header.join('\r\n')}\r\n`),
+        yencEncode(data),
+        Buffer.from(`${trailer}\r\n`)
+      ])
       articles.push({
         messageId: `part${part}of${total}.${index}.${file.name.replace(/[^\w.-]/g, '_')}@plexo.test`,
         file: index,
@@ -122,14 +130,15 @@ function post(files: NewsFile[], articleBytes: number): Article[] {
 
 /** A line that starts with a dot gets another (RFC 3977 §3.1.1), and the body ends with one. */
 function dotStuffed(body: Buffer): Buffer {
-  const out: number[] = []
-  let lineStart = true
-  for (const byte of body) {
-    if (lineStart && byte === 0x2e) out.push(0x2e)
-    out.push(byte)
-    lineStart = byte === 0x0a
+  const parts: Buffer[] = []
+  let from = 0
+  if (body[0] === 0x2e) parts.push(Buffer.from('.'))
+  for (let at = body.indexOf('\n.'); at >= 0; at = body.indexOf('\n.', at + 1)) {
+    parts.push(body.subarray(from, at + 1), Buffer.from('.'))
+    from = at + 1
   }
-  return Buffer.concat([Buffer.from(out), Buffer.from('.\r\n')])
+  parts.push(body.subarray(from), Buffer.from('.\r\n'))
+  return Buffer.concat(parts)
 }
 
 const escapeXml = (text: string): string =>

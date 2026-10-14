@@ -509,7 +509,7 @@ export class NzbTransfer implements Transfer {
 
     if (error instanceof NntpAuthError) {
       this.host.failDownload(
-        `The news server didn’t accept the username or password. Check them in Usenet server settings. (${error.message})`
+        `The news server didn’t accept the username or password. Check them in the server’s settings, then try again. (${error.message})`
       )
       return 'stop'
     }
