@@ -1,4 +1,5 @@
 import type { ProbeResult } from '@shared/types'
+import { CHECKSUM_LABEL, parseChecksum } from '@shared/checksum'
 import { cn } from 'cn'
 import { AlertTriangle, ChevronLeft, ChevronRight, FolderOpen, Globe, Lock, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
@@ -8,14 +9,17 @@ import { useNetworkVisuals } from '../hooks/useNetworkVisuals'
 import { useDownloadSchedule } from '../hooks/useDownloadSchedule'
 import { useAppStore } from '../store/useAppStore'
 import {
-  acceptedLink,
+  acceptedLinks,
   describeError,
   describeFileCount,
+  extractLinks,
   fileExtensionBadge,
   formatBytes,
+  sortedDestination,
   toDisplayPath
 } from '../utils/format'
 import { Button } from './ui/button'
+import { Checkbox } from './ui/checkbox'
 import { Dialog, DialogContent, DialogTitle } from './ui/dialog'
 import { ToggleGroup, ToggleGroupItem } from './ui/toggle-group'
 import { TorrentFileList } from './TorrentFiles'
@@ -72,6 +76,13 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
   const shownLink = links.find((link) => link.id === shownId)
   const position = shownLink ? links.indexOf(shownLink) : -1
   const destinationDir = useAppStore((store) => store.destinationDir)
+  const sortByType = useAppStore((store) => store.sortByType)
+  const setSortByType = useAppStore((store) => store.setSortByType)
+  // A torrent of several files keeps them together in its own folder, whatever they are.
+  const saveDirFor = (result: ProbeResult, fileName: string): string =>
+    result.kind === 'torrent' && result.torrent.files.length > 1
+      ? destinationDir
+      : sortedDestination(destinationDir, fileName, sortByType)
   const setDestinationDir = useAppStore((store) => store.setDestinationDir)
   const full = useAppStore(
     (store) =>
@@ -100,6 +111,15 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
   const [skippedFiles, setSkippedFiles] = useState<number[]>([])
   // For this download only: the next one starts on Auto again.
   const [streamsChoice, setStreamsChoice] = useState<StreamsChoice>('auto')
+  // Optional: a hash from the download's page, checked before the file is saved.
+  const [checksumText, setChecksumText] = useState('')
+  const checksum = checksumText.trim() ? parseChecksum(checksumText) : undefined
+  // Several links pasted at once: each is checked, then all start with this form's folder and
+  // networks.
+  const batch = extractLinks(url)
+  const isBatch = batch.length > 1
+  const batchKey = isBatch ? batch.join('\n') : ''
+  const [batchProbes, setBatchProbes] = useState<Record<string, ProbeState>>({})
 
   // Opened with nothing in it: a link on the clipboard is most likely what it's for, as download
   // managers have long assumed. Anything else on the clipboard is left alone.
@@ -108,7 +128,7 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
     void window.plexo
       .readClipboardText()
       .then((text) => {
-        const link = acceptedLink(text)
+        const link = acceptedLinks(text)
         const { draftUrl, startedUrl } = useAppStore.getState()
         if (link && link !== startedUrl && !draftUrl) setUrl(link)
       })
@@ -117,7 +137,7 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
 
   useEffect(() => {
     const trimmed = url.trim()
-    if (!trimmed) {
+    if (!trimmed || extractLinks(trimmed).length > 1) {
       // Resetting derived probe state when its trigger (the URL) is cleared.
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setProbe({ status: 'idle' })
@@ -158,6 +178,43 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
     }
   }, [url, dropLink])
 
+  useEffect(() => {
+    if (!batchKey) return
+    let stale = false
+    const links = batchKey.split('\n')
+    // Resetting derived probe state when its trigger (the links) changes.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setBatchProbes(Object.fromEntries(links.map((link) => [link, { status: 'probing' }])))
+    // ponytail: every link is checked at once; queue the checks if people paste hundreds.
+    const timer = setTimeout(() => {
+      for (const link of links) {
+        window.plexo.probeUrl(link).then(
+          (result) => {
+            if (!stale) setBatchProbes((all) => ({ ...all, [link]: { status: 'ready', result } }))
+          },
+          (error) => {
+            if (stale) return
+            setBatchProbes((all) => ({
+              ...all,
+              [link]: { status: 'error', message: describeError(error) }
+            }))
+          }
+        )
+      }
+    }, PROBE_DEBOUNCE_MS)
+    return () => {
+      stale = true
+      clearTimeout(timer)
+    }
+  }, [batchKey])
+  const batchReady = batch.flatMap((link) => {
+    const state = batchProbes[link]
+    return state?.status === 'ready' ? [{ link, result: state.result }] : []
+  })
+  const batchChecking = batch.some(
+    (link) => !batchProbes[link] || batchProbes[link].status === 'probing'
+  )
+
   const ready = probe.status === 'ready' ? probe.result : null
   const torrent = ready?.kind === 'torrent' ? ready.torrent : null
   const chosenFiles = torrent
@@ -190,21 +247,29 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
         )
       : []
 
-  const canStart =
-    probe.status === 'ready' &&
-    (!torrent || chosenFiles.length > 0) &&
-    selectedInterfaceIds.length > 0 &&
-    Boolean(destinationDir) &&
-    !starting
+  const canStart = isBatch
+    ? batchReady.length > 0 &&
+      !batchChecking &&
+      selectedInterfaceIds.length > 0 &&
+      Boolean(destinationDir) &&
+      !starting
+    : probe.status === 'ready' &&
+      (!torrent || chosenFiles.length > 0) &&
+      (torrent !== null || checksum !== null) &&
+      selectedInterfaceIds.length > 0 &&
+      Boolean(destinationDir) &&
+      !starting
   const startLabel = starting
     ? 'Starting'
-    : probe.status === 'probing'
+    : probe.status === 'probing' || (isBatch && batchChecking)
       ? 'Checking'
-      : scheduledWait
-        ? 'Add to scheduled queue'
-        : full
-          ? 'Add to queue'
-          : 'Download'
+      : isBatch
+        ? `Download ${batchReady.length}`
+        : scheduledWait
+          ? 'Add to scheduled queue'
+          : full
+            ? 'Add to queue'
+            : 'Download'
 
   // Two networks on one subnet: the OS sends both down one route, so there's nothing to combine.
   let subnetConflict: { subnet: string; names: string[] } | null = null
@@ -269,7 +334,50 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
     }
   }
 
+  // Each ready link starts as it would alone with this folder and these networks, on Auto and
+  // with every file of a torrent. Those that fail stay in the field, saying what went wrong.
+  const handleStartAll = async (): Promise<void> => {
+    if (!canStart) return
+    setStarting(true)
+    setStartError(null)
+    const failed: string[] = []
+    let firstError: unknown
+    for (const { link, result } of batchReady) {
+      try {
+        const common = {
+          url: result.finalUrl,
+          destinationDir: saveDirFor(result, result.suggestedFileName),
+          suggestedFileName: result.suggestedFileName,
+          totalBytes: result.totalBytes ?? 0,
+          supportsRanges: result.supportsRanges && result.totalBytes !== null,
+          interfaceIds: selectedInterfaceIds,
+          etag: result.etag,
+          lastModified: result.lastModified
+        }
+        await window.plexo.startDownload(
+          result.kind === 'torrent'
+            ? { ...common, kind: 'torrent', infoHash: result.torrent.infoHash }
+            : { ...common, kind: 'http' }
+        )
+      } catch (error) {
+        failed.push(link)
+        firstError ??= error
+      }
+    }
+    setStarting(false)
+    if (failed.length > 0) {
+      setUrl(failed.join('\n'))
+      setStartError(
+        `${failed.length} of ${batchReady.length} couldn’t start: ${describeError(firstError)}`
+      )
+      return
+    }
+    useAppStore.setState({ startedUrl: url.trim(), draftUrl: '' })
+    onDone()
+  }
+
   const handleStart = async (): Promise<void> => {
+    if (isBatch) return handleStartAll()
     if (probe.status !== 'ready' || !canStart) return
     // Captured now: links can arrive and change what's shown while this starts.
     const linkId = shownLink?.id
@@ -279,7 +387,7 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
     try {
       const common = {
         url: probe.result.finalUrl,
-        destinationDir,
+        destinationDir: saveDir,
         suggestedFileName: fileNameOverride?.trim() || probe.result.suggestedFileName,
         totalBytes: probe.result.totalBytes ?? 0,
         supportsRanges: multiChunkAllowed,
@@ -298,7 +406,8 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
           : {
               ...common,
               kind: 'http',
-              streamsPerNetwork: streamsChoice === 'auto' ? undefined : streamsChoice
+              streamsPerNetwork: streamsChoice === 'auto' ? undefined : streamsChoice,
+              checksum: checksum ? checksumText.trim() : undefined
             },
         linkId
       )
@@ -332,6 +441,7 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
   }
 
   const fileName = ready ? (fileNameOverride ?? ready.suggestedFileName) : ''
+  const saveDir = ready ? saveDirFor(ready, fileName) : destinationDir
 
   return (
     <form
@@ -376,21 +486,40 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
         <div className="flex items-center gap-2">
           <div
             className={cn(
-              'flex h-9 min-w-0 flex-1 items-center gap-2 rounded-[9px] border bg-[var(--input-bg)] px-3',
+              'flex min-h-9 min-w-0 flex-1 items-center gap-2 rounded-[9px] border bg-[var(--input-bg)] px-3',
               probe.status === 'error' ? 'border-destructive' : 'border-input'
             )}
           >
-            <input
-              ref={linkInput}
-              autoFocus
-              type="text"
-              value={url}
-              onChange={(event) => setUrl(event.target.value)}
-              placeholder="Paste a link: https:// or magnet:"
-              spellCheck={false}
-              aria-label="Link"
-              className="min-w-0 flex-1 border-none bg-transparent font-mono text-[13px] text-foreground outline-none"
-            />
+            {isBatch ? (
+              <textarea
+                autoFocus
+                value={url}
+                onChange={(event) => setUrl(event.target.value)}
+                rows={Math.min(batch.length, 5)}
+                spellCheck={false}
+                aria-label="Links"
+                className="min-w-0 flex-1 resize-none border-none bg-transparent py-2 font-mono text-[13px] text-foreground outline-none"
+              />
+            ) : (
+              <input
+                ref={linkInput}
+                autoFocus
+                type="text"
+                value={url}
+                onChange={(event) => setUrl(event.target.value)}
+                // A text field drops line breaks, which would run several links into one.
+                onPaste={(event) => {
+                  const links = extractLinks(event.clipboardData.getData('text'))
+                  if (links.length < 2) return
+                  event.preventDefault()
+                  setUrl(links.join('\n'))
+                }}
+                placeholder="Paste a link: https:// or magnet:"
+                spellCheck={false}
+                aria-label="Link"
+                className="min-w-0 flex-1 border-none bg-transparent font-mono text-[13px] text-foreground outline-none"
+              />
+            )}
             {url && (
               <Tooltip>
                 <TooltipTrigger
@@ -452,6 +581,37 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
           </div>
         )}
 
+        {isBatch && (
+          <ul aria-label="Links to download" className="flex flex-col gap-1">
+            {batch.map((link) => {
+              const state = batchProbes[link]
+              return (
+                <li key={link} className="flex items-center gap-2 text-[12.5px]">
+                  <span className="min-w-0 flex-1 truncate">
+                    {state?.status === 'ready' ? state.result.suggestedFileName : link}
+                  </span>
+                  <span
+                    className={cn(
+                      'max-w-[50%] shrink-0 truncate font-mono text-[11.5px]',
+                      state?.status === 'error'
+                        ? 'text-[var(--color-danger)]'
+                        : 'text-muted-foreground'
+                    )}
+                  >
+                    {state?.status === 'ready'
+                      ? state.result.totalBytes !== null
+                        ? formatBytes(state.result.totalBytes)
+                        : 'size unknown'
+                      : state?.status === 'error'
+                        ? state.message
+                        : 'Checking…'}
+                  </span>
+                </li>
+              )
+            })}
+          </ul>
+        )}
+
         {probe.status === 'probing' && (
           <div className="font-mono text-[11.5px] text-muted-foreground">Checking the link…</div>
         )}
@@ -509,12 +669,16 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
         <div className="flex items-center gap-3">
           <div className={labelClass}>Save to</div>
           <div className="min-w-0 flex-1 truncate font-mono text-[12.5px]">
-            {toDisplayPath(destinationDir, homeDir)}
+            {toDisplayPath(isBatch ? destinationDir : saveDir, homeDir)}
           </div>
           <Button type="button" variant="secondary" size="sm" onClick={handleBrowse}>
             Change
           </Button>
         </div>
+        <label className="-mt-1.5 flex items-center gap-2 pl-[76px] text-[12.5px] text-[var(--text-secondary)]">
+          <Checkbox checked={sortByType} onCheckedChange={setSortByType} />
+          Sort into folders by type (Videos, Music, Archives…)
+        </label>
 
         <div className="flex items-start gap-3">
           <div className={cn(labelClass, 'pt-1.5')} id="new-download-networks">
@@ -596,6 +760,41 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
               ))}
             </ToggleGroup>
             <div className="font-mono text-[11px] text-muted-foreground">per network</div>
+          </div>
+        )}
+
+        {ready && !torrent && (
+          <div className="flex items-center gap-3">
+            <label htmlFor="new-download-checksum" className={labelClass}>
+              Checksum
+            </label>
+            <input
+              id="new-download-checksum"
+              type="text"
+              value={checksumText}
+              onChange={(event) => setChecksumText(event.target.value)}
+              placeholder="Optional: MD5 or SHA-256 from the download page"
+              spellCheck={false}
+              aria-invalid={checksum === null || undefined}
+              aria-describedby="new-download-checksum-note"
+              className={cn(
+                'h-8 min-w-0 flex-1 rounded-md border bg-[var(--input-bg)] px-2.5 font-mono text-[12px] outline-none focus:ring-2 focus:ring-ring',
+                checksum === null ? 'border-destructive' : 'border-input'
+              )}
+            />
+            <span
+              id="new-download-checksum-note"
+              className={cn(
+                'w-20 shrink-0 font-mono text-[11px]',
+                checksum === null ? 'text-[var(--color-danger)]' : 'text-muted-foreground'
+              )}
+            >
+              {checksum === null
+                ? 'Not a hash'
+                : checksum
+                  ? CHECKSUM_LABEL[checksum.algorithm]
+                  : ''}
+            </span>
           </div>
         )}
 

@@ -180,6 +180,19 @@ export function acceptedLink(text: string): string | null {
   return null
 }
 
+/** Every link in pasted text, one per line or space-separated, each once, in order. */
+export function extractLinks(text: string): string[] {
+  const links = text.split(/\s+/).flatMap((word) => acceptedLink(word) ?? [])
+  return [...new Set(links)]
+}
+
+/** What pasted text puts in New download's link field: its links one per line when there are
+ * several, else the one link (a .torrent path may have spaces), else nothing. */
+export function acceptedLinks(text: string): string | null {
+  const links = extractLinks(text)
+  return links.length > 1 ? links.join('\n') : acceptedLink(text)
+}
+
 /** Where a link's download comes from, in a word: its host. */
 export function sourceOf(url: string): string {
   try {
@@ -313,6 +326,25 @@ export function fileCategory(fileName: string): FileCategory {
   for (const [category, extensions] of Object.entries(CATEGORY_EXTENSIONS))
     if (extensions.includes(extension)) return category as FileCategory
   return 'other'
+}
+
+/** The subfolder a type of file goes in when downloads are sorted by type; other files stay in
+ * the folder picked. */
+export const TYPE_FOLDERS: Record<Exclude<FileCategory, 'other'>, string> = {
+  video: 'Videos',
+  audio: 'Music',
+  image: 'Pictures',
+  document: 'Documents',
+  archive: 'Archives',
+  program: 'Programs'
+}
+
+/** Where a file named `fileName` is saved under `dir`: in its type's subfolder when sorting. */
+export function sortedDestination(dir: string, fileName: string, sortByType: boolean): string {
+  const category = fileCategory(fileName)
+  if (!sortByType || category === 'other') return dir
+  const separator = window.plexo.platform === 'win32' ? '\\' : '/'
+  return `${dir.replace(/[\\/]+$/, '')}${separator}${TYPE_FOLDERS[category]}`
 }
 
 /** When a download was added, as the list's column shows it: the time today, else "10 Oct". */

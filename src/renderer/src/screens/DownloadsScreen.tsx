@@ -1,4 +1,4 @@
-import type { DownloadState, FinishedDownload } from '@shared/types'
+import type { DownloadState, FinishedDownload, WhenDone } from '@shared/types'
 import {
   ArrowDownUp,
   ChevronDown,
@@ -14,6 +14,7 @@ import {
   Menu as MenuIcon,
   Package,
   Plus,
+  Power,
   Search,
   X,
   type LucideIcon
@@ -40,6 +41,9 @@ import {
   DropdownMenuItem,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger
 } from '../components/ui/dropdown-menu'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../components/ui/tooltip'
@@ -93,6 +97,41 @@ const COMPARE: Record<DownloadSort, (a: Item, b: Item) => number> = {
   oldest: (a, b) => a.startedAt - b.startedAt,
   name: (a, b) => a.fileName.localeCompare(b.fileName, undefined, { numeric: true }),
   size: (a, b) => wantedBytes(b) - wantedBytes(a)
+}
+
+const WHEN_DONE_LABEL: Record<WhenDone, string> = {
+  nothing: 'Do nothing',
+  quit: 'Quit Plexo',
+  sleep: 'Sleep',
+  shutdown: 'Shut down'
+}
+
+/** Says, while it's set, what happens once downloads finish; a click calls it off. */
+function WhenDoneIndicator(): React.JSX.Element | null {
+  const whenDone = useAppStore((store) => store.whenDone)
+  const setWhenDone = useAppStore((store) => store.setWhenDone)
+  if (whenDone === 'nothing') return null
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            aria-label={`${WHEN_DONE_LABEL[whenDone]} when done. Cancel`}
+            className="text-primary"
+            onClick={() => setWhenDone('nothing')}
+          >
+            <Power data-icon="inline-start" />
+            <span className="hidden lg:inline">{WHEN_DONE_LABEL[whenDone]} when done</span>
+            <X data-icon="inline-end" />
+          </Button>
+        }
+      />
+      <TooltipContent>Cancel</TooltipContent>
+    </Tooltip>
+  )
 }
 
 const CATEGORY_ICON: Record<FileCategory | 'folder', LucideIcon> = {
@@ -165,6 +204,8 @@ export function DownloadsScreen(): React.JSX.Element {
   const setTypeFilter = useAppStore((store) => store.setTypeFilter)
   const sort = useAppStore((store) => store.downloadSort)
   const setSort = useAppStore((store) => store.setDownloadSort)
+  const whenDone = useAppStore((store) => store.whenDone)
+  const setWhenDone = useAppStore((store) => store.setWhenDone)
   const [query, setQuery] = useState('')
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const { perform, askClearFinished } = useDownloadActions()
@@ -235,7 +276,7 @@ export function DownloadsScreen(): React.JSX.Element {
   const networkVisual = useNetworkVisuals()
   const selectRow = useCallback((id: string, on: boolean) => toggle([id], on), [toggle])
   const openRow = useCallback((id: string) => setView({ name: 'download', id }), [setView])
-  // Keys for the selection: Esc clears it, Select all, and Delete takes
+  // Keys for the selection: Esc clears it, Select all, Space pauses or resumes, and Delete takes
   // the selected off the list (with Cmd/Ctrl, moves their files to the Trash), each asking first.
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
@@ -255,6 +296,18 @@ export function DownloadsScreen(): React.JSX.Element {
       } else if (command && event.key.toLowerCase() === 'f') {
         event.preventDefault()
         document.getElementById('download-search')?.focus()
+      } else if (
+        event.key === ' ' &&
+        !(target instanceof HTMLElement && target.closest('button, [role="checkbox"], a'))
+      ) {
+        // Pause what's running in the selection; with nothing running, resume what's paused.
+        const actions = availableActions(chosen).flat()
+        const action =
+          actions.find((available) => available.id === 'pause') ??
+          actions.find((available) => available.id === 'resume')
+        if (!action) return
+        event.preventDefault()
+        void perform(action.id, action.targets)
       } else if (event.key === 'Delete' || event.key === 'Backspace') {
         const id = command ? 'trash' : 'remove'
         const action = availableActions(chosen)
@@ -340,6 +393,7 @@ export function DownloadsScreen(): React.JSX.Element {
             }}
           />
           <div className="flex-1" />
+          <WhenDoneIndicator />
           <ScheduleIndicator onClick={openSchedule} />
           <NetworksMenu onOpenLimits={openLimits} />
           <Button type="button" aria-label="Add download" onClick={() => openNewDownload()}>
@@ -382,8 +436,23 @@ export function DownloadsScreen(): React.JSX.Element {
                 <Plus aria-hidden />
                 Add download
               </DropdownMenuItem>
-              <DropdownMenuItem onClick={openSchedule}>Download schedule…</DropdownMenuItem>
-              <DropdownMenuItem onClick={() => openLimits(null)}>Speed limits…</DropdownMenuItem>
+              <DropdownMenuItem onClick={openSchedule}>Download schedule</DropdownMenuItem>
+              <DropdownMenuItem onClick={() => openLimits(null)}>Speed limits</DropdownMenuItem>
+              <DropdownMenuSub>
+                <DropdownMenuSubTrigger>When downloads finish</DropdownMenuSubTrigger>
+                <DropdownMenuSubContent className="min-w-36">
+                  <DropdownMenuRadioGroup
+                    value={whenDone}
+                    onValueChange={(value) => setWhenDone(value as WhenDone)}
+                  >
+                    {(Object.keys(WHEN_DONE_LABEL) as WhenDone[]).map((action) => (
+                      <DropdownMenuRadioItem key={action} value={action}>
+                        {WHEN_DONE_LABEL[action]}
+                      </DropdownMenuRadioItem>
+                    ))}
+                  </DropdownMenuRadioGroup>
+                </DropdownMenuSubContent>
+              </DropdownMenuSub>
               <DropdownMenuItem disabled={history.length === 0} onClick={askClearFinished}>
                 Clear finished list
               </DropdownMenuItem>

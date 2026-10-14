@@ -10,7 +10,8 @@ import type {
   NetworkPreferences,
   PendingLink,
   SpeedUnit,
-  ThemeSource
+  ThemeSource,
+  WhenDone
 } from '@shared/types'
 import { create } from 'zustand'
 import type { FileCategory } from '../utils/format'
@@ -90,6 +91,10 @@ interface AppStore {
   startedUrl: string
   /** Persisted — the last folder picked, falling back to downloadsDir. */
   destinationDir: string
+  /** Persisted — new downloads go in a subfolder by type (see TYPE_FOLDERS). */
+  sortByType: boolean
+  /** This session only, kept by main: what happens once every download is done. */
+  whenDone: WhenDone
 
   /** Asks the main process for the network list now; it also pushes every change. */
   loadInterfaces: () => Promise<void>
@@ -120,6 +125,10 @@ interface AppStore {
   setSpeedUnit: (unit: SpeedUnit) => void
   setDraftUrl: (url: string) => void
   setDestinationDir: (dir: string) => void
+  setSortByType: (on: boolean) => void
+  setWhenDone: (action: WhenDone) => void
+  /** As main says it is now, e.g. back to nothing once it's done. */
+  receiveWhenDone: (action: WhenDone) => void
 }
 
 // Settings saved by the main process, read once before the first paint (see InitialState).
@@ -174,6 +183,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
   formKey: 0,
   startedUrl: '',
   destinationDir: initial.destinationDir ?? initial.downloadsDir,
+  sortByType: initial.sortByType ?? false,
+  whenDone: 'nothing',
 
   loadInterfaces: async () => {
     // A re-scan keeps showing the last result rather than flashing back to 'loading'.
@@ -307,5 +318,14 @@ export const useAppStore = create<AppStore>((set, get) => ({
   setDestinationDir: (destinationDir) => {
     set({ destinationDir })
     persist({ destinationDir })
-  }
+  },
+  setSortByType: (sortByType) => {
+    set({ sortByType })
+    persist({ sortByType })
+  },
+  setWhenDone: (whenDone) => {
+    set({ whenDone })
+    window.plexo.setWhenDone(whenDone).catch(() => set({ whenDone: 'nothing' }))
+  },
+  receiveWhenDone: (whenDone) => set({ whenDone })
 }))

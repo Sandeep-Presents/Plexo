@@ -10,11 +10,11 @@ const CURVE_LEN = 64
 const STREAM_LEN = 42
 const END_PAD = 8
 const MIN_LABEL_X = 68
-const MAX_LABEL_CHARS = 18
-// Rough advance width (px) of one uppercase glyph in the label's 8.5px mono font plus its
-// 0.08em letter-spacing — an overestimate is safer here than an underestimate, since this
-// sizes an SVG column rather than flowing text a browser could wrap or ellipsize for us.
-const CHAR_WIDTH = 6.4
+const MAX_LABEL_CHARS = 20
+// Rough advance width (px) of one glyph in the label's 11px sans font — an overestimate is
+// safer here than an underestimate, since this sizes an SVG column rather than flowing text a
+// browser could wrap or ellipsize for us.
+const CHAR_WIDTH = 6.2
 const LABEL_EDGE_PAD = 4
 
 export interface CombineDiagramNetwork {
@@ -112,13 +112,9 @@ export function CombineDiagram({
       })}
       {networks.map((network, index) => {
         const y = (index + 0.5) * (height / networks.length)
+        const name = network.label.trim()
         const label =
-          network.label.trim().length > MAX_LABEL_CHARS
-            ? `${network.label
-                .trim()
-                .slice(0, MAX_LABEL_CHARS - 1)
-                .toUpperCase()}…`
-            : network.label.trim().toUpperCase()
+          name.length > MAX_LABEL_CHARS ? `${name.slice(0, MAX_LABEL_CHARS - 1).trimEnd()}…` : name
         const hasSpeed = network.speedBytesPerSec != null && network.speedBytesPerSec > 0
         const speedText = hasSpeed ? formatSpeed(network.speedBytesPerSec!) : '—'
 
@@ -128,8 +124,8 @@ export function CombineDiagram({
               x={LABEL_X}
               y={y - 5.5}
               textAnchor="end"
-              fill={muted ? 'var(--icon-muted)' : 'var(--text-tertiary)'}
-              className="font-mono text-[8.5px] font-medium tracking-[0.08em]"
+              fill={muted ? 'var(--icon-muted)' : 'var(--text-secondary)'}
+              className="font-sans text-[11px] font-medium"
             >
               <title>{network.label}</title>
               {label}
@@ -139,7 +135,7 @@ export function CombineDiagram({
                 x={LABEL_X}
                 y={y + 7.5}
                 textAnchor="end"
-                fill={hasSpeed ? network.solid : 'var(--text-tertiary)'}
+                fill={hasSpeed ? 'var(--text)' : 'var(--text-tertiary)'}
                 className="font-mono text-[11px] font-semibold tabular-nums"
               >
                 {speedText}
@@ -154,9 +150,9 @@ export function CombineDiagram({
           y={midY - 11}
           textAnchor="end"
           fill="var(--text-tertiary)"
-          className="font-mono text-[8.5px] tracking-[0.12em] font-medium"
+          className="font-sans text-[10.5px] font-medium"
         >
-          COMBINED
+          Combined
         </text>
       )}
     </svg>

@@ -90,6 +90,7 @@ function sanitizeSettings(parsed: unknown): AppSettings {
     settings.speedUnit = parsed.speedUnit
   }
   if (parsed.browserExtensionUsed === true) settings.browserExtensionUsed = true
+  if (parsed.sortByType === true) settings.sortByType = true
   return settings
 }
 

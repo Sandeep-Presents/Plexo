@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
 import { useAppStore } from '../store/useAppStore'
-import { acceptedLink } from '../utils/format'
+import { acceptedLinks } from '../utils/format'
 
 /** Opens New download with links handed to Plexo, for the user to look at and start. */
 export function useOpenedLinks(): void {
@@ -29,7 +29,7 @@ export function useNewDownloadShortcuts(): void {
 
     const onPaste = (event: ClipboardEvent): void => {
       if (busy(event.target)) return
-      const link = acceptedLink(event.clipboardData?.getData('text') ?? '')
+      const link = acceptedLinks(event.clipboardData?.getData('text') ?? '')
       if (link) openNewDownload(link)
     }
     const onKeyDown = (event: KeyboardEvent): void => {
@@ -47,7 +47,7 @@ export function useNewDownloadShortcuts(): void {
         ? /\.torrent$/i.test(file.name)
           ? window.plexo.pathForFile(file)
           : null
-        : acceptedLink(event.dataTransfer?.getData('text') ?? '')
+        : acceptedLinks(event.dataTransfer?.getData('text') ?? '')
       if (link) openNewDownload(link)
     }
 

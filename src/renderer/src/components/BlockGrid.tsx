@@ -286,18 +286,18 @@ export function BlockGrid({
             return (
               <div
                 key={group.id}
-                className="flex items-center gap-[5.5px] font-mono text-[10.5px] leading-none font-medium text-[var(--text-secondary)]"
+                className="flex items-center gap-1.5 text-[12px] leading-none font-medium text-foreground"
               >
                 <span
                   className="size-[7px] shrink-0 rounded-full"
                   style={{ background: visual.solid }}
                 />
-                <span className="font-semibold text-foreground">{visual.name}</span>
+                {visual.name}
               </div>
             )
           })}
           {cells.length > 0 && chunkBytes > 0 && (
-            <div className="ml-auto font-mono text-[10px] leading-none font-medium tabular-nums text-muted-foreground">
+            <div className="ml-auto font-mono text-[10.5px] leading-none tabular-nums text-muted-foreground">
               {readout}
             </div>
           )}

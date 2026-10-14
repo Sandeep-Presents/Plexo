@@ -7,12 +7,13 @@ import type {
   ProbeResult,
   StartDownloadRequest,
   TorrentFileEntry,
-  UpdateState
+  UpdateState,
+  WhenDone
 } from './types'
 
 /** The request/response half of the IPC surface (every IpcChannels entry except the
- * main->renderer push events, downloadUpdated, networksChanged, historyChanged, linkReceived and
- * updateStateChanged) — one source of truth for
+ * main->renderer push events, downloadUpdated, networksChanged, historyChanged, linkReceived,
+ * updateStateChanged and whenDoneChanged) — one source of truth for
  * both plexoApi (preload) and registerIpcHandlers (main), so a signature drift between the two
  * is a compile error instead of a runtime one. */
 export interface IpcContract {
@@ -66,4 +67,8 @@ export interface IpcContract {
   resumeFromLink: { args: [linkId: string, downloadId: string]; result: void }
   /** Forgets the sign-in of a link that won't be started. */
   dismissLink: { args: [id: string]; result: void }
+  /** What to do once every download is done; whenDoneChanged says when main changes it. */
+  setWhenDone: { args: [action: WhenDone]; result: void }
+  /** Moves a queued download to the front of the queue. */
+  startNext: { args: [id: string]; result: void }
 }
