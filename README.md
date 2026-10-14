@@ -33,6 +33,18 @@
   For anything private, email <a href="mailto:hello@getplexo.app"><strong>hello@getplexo.app</strong></a>
 </p>
 
+<p align="center">
+  <a href="https://trendshift.io/repositories/240800">
+    <img src="https://trendshift.io/api/badge/trendshift/repositories/240800/daily?language=TypeScript" alt="Plexo: #6 TypeScript Repository of the Day on Trendshift" width="250" height="55">
+  </a>
+  <a href="https://trendshift.io/repositories/240800">
+    <img src="https://trendshift.io/api/badge/trendshift/repositories/240800/daily" alt="Plexo: #25 Repository of the Day on Trendshift" width="250" height="55">
+  </a>
+  <a href="https://trendshift.io/repositories/240800">
+    <img src="https://trendshift.io/api/badge/trendshift/repositories/240800/weekly?language=TypeScript" alt="Plexo: #21 TypeScript Repository of the Week on Trendshift" width="250" height="55">
+  </a>
+</p>
+
 https://github.com/user-attachments/assets/e57728f4-fb63-441f-839c-174eef954b17
 
 ## Features
