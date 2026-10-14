@@ -12,6 +12,7 @@
 <p align="center">
   <a href="https://getplexo.app">Download</a> ·
   <a href="#features">Features</a> ·
+  <a href="#troubleshooting">Troubleshooting</a> ·
   <a href="#how-it-works">How it works</a> ·
   <a href="#build-from-source">Build</a>
 </p>
