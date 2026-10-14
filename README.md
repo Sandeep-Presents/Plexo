@@ -47,6 +47,7 @@ https://github.com/user-attachments/assets/e57728f4-fb63-441f-839c-174eef954b17
 
 - Combine multiple internet connections for faster downloads
 - Enable or disable networks during a download
+- Rename networks and customize their colors
 - Download file chunks in parallel across connections
 - Balance chunks across connections, with faster networks handling more of the download
 - Automatically adjust parallel streams to network, server and disk performance
