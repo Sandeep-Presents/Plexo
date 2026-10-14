@@ -267,3 +267,62 @@ export function linkExpired(download: DownloadState): boolean {
     LINK_REFUSED.test(download.error ?? '')
   )
 }
+
+export type FileCategory =
+  'video' | 'audio' | 'image' | 'document' | 'archive' | 'program' | 'other'
+
+const CATEGORY_EXTENSIONS: Record<Exclude<FileCategory, 'other'>, string[]> = {
+  video: ['mp4', 'mkv', 'avi', 'mov', 'webm', 'wmv', 'flv', 'm4v', 'mpg', 'mpeg', 'ts'],
+  audio: ['mp3', 'wav', 'flac', 'aac', 'ogg', 'm4a', 'opus', 'wma'],
+  image: ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp', 'heic', 'tiff', 'ico'],
+  document: [
+    'pdf',
+    'doc',
+    'docx',
+    'xls',
+    'xlsx',
+    'ppt',
+    'pptx',
+    'txt',
+    'md',
+    'csv',
+    'epub',
+    'odt',
+    'rtf'
+  ],
+  archive: ['zip', 'rar', '7z', 'tar', 'gz', 'bz2', 'xz', 'zst', 'iso', 'xip', 'dmg'],
+  program: [
+    'exe',
+    'msi',
+    'msix',
+    'appx',
+    'apk',
+    'deb',
+    'rpm',
+    'appimage',
+    'pkg',
+    'bat',
+    'sh',
+    'jar'
+  ]
+}
+
+/** What kind of file a name is, by its extension, for the list's file-type filter and icon. */
+export function fileCategory(fileName: string): FileCategory {
+  const extension = fileName.slice(fileName.lastIndexOf('.') + 1).toLowerCase()
+  for (const [category, extensions] of Object.entries(CATEGORY_EXTENSIONS))
+    if (extensions.includes(extension)) return category as FileCategory
+  return 'other'
+}
+
+/** When a download was added, as the list's column shows it: the time today, else "10 Oct". */
+export function formatAdded(time: number, now: number): string {
+  const date = new Date(time)
+  if (date.toDateString() === new Date(now).toDateString())
+    return date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+  return date.toLocaleDateString(undefined, {
+    day: 'numeric',
+    month: 'short',
+    ...(date.getFullYear() !== new Date(now).getFullYear() && { year: 'numeric' })
+  })
+}

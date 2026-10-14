@@ -286,7 +286,10 @@ export class PlexoApp {
   async newDownload(): Promise<Locator> {
     const link = this.page.getByRole('textbox', { name: 'Link' })
     if (!(await link.isVisible())) {
-      await this.page.getByRole('button', { name: 'New download' }).first().click()
+      await this.page
+        .getByRole('button', { name: /^(Add|New) download/ })
+        .first()
+        .click()
     }
     return link
   }

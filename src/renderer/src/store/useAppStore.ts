@@ -13,8 +13,28 @@ import type {
   ThemeSource
 } from '@shared/types'
 import { create } from 'zustand'
+import type { FileCategory } from '../utils/format'
 
 export type DownloadFilter = 'all' | 'progress' | 'finished' | 'failed'
+export type TypeFilter = 'all' | FileCategory
+export type DownloadSort = 'newest' | 'oldest' | 'name' | 'size'
+
+/** A view preference kept in this window's storage; the default when there's none. */
+function remembered<T extends string>(key: string, fallback: T): T {
+  try {
+    return (localStorage.getItem(key) as T | null) ?? fallback
+  } catch {
+    return fallback
+  }
+}
+
+function remember(key: string, value: string): void {
+  try {
+    localStorage.setItem(key, value)
+  } catch {
+    // Not remembered next launch; the store still has it.
+  }
+}
 
 type LoadStatus = 'idle' | 'loading' | 'ready' | 'error'
 
@@ -41,6 +61,10 @@ interface AppStore {
   view: View
   downloadFilter: DownloadFilter
   setDownloadFilter: (filter: DownloadFilter) => void
+  typeFilter: TypeFilter
+  setTypeFilter: (filter: TypeFilter) => void
+  downloadSort: DownloadSort
+  setDownloadSort: (sort: DownloadSort) => void
   downloadSchedule: DownloadSchedule | undefined
   /** The New download dialog, over whatever the window shows. */
   newDownloadOpen: boolean
@@ -126,6 +150,16 @@ export const useAppStore = create<AppStore>((set, get) => ({
   view: { name: 'list' },
   downloadFilter: 'all',
   setDownloadFilter: (downloadFilter) => set({ downloadFilter }),
+  typeFilter: remembered<TypeFilter>('typeFilter', 'all'),
+  setTypeFilter: (typeFilter) => {
+    set({ typeFilter })
+    remember('typeFilter', typeFilter)
+  },
+  downloadSort: remembered<DownloadSort>('downloadSort', 'newest'),
+  setDownloadSort: (downloadSort) => {
+    set({ downloadSort })
+    remember('downloadSort', downloadSort)
+  },
   downloadSchedule: initial.downloadSchedule,
   newDownloadOpen: false,
   downloadsAtOnce: initial.downloadsAtOnce,

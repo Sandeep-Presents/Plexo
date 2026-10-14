@@ -2,7 +2,7 @@ import type { SpeedUnit } from '@shared/types'
 import { useEffect, useState } from 'react'
 import { useAppStore } from '../store/useAppStore'
 import { formatBytes } from '../utils/format'
-import { useFormatSpeedLimit } from '../hooks/useFormatSpeed'
+import { useFormatSpeed, useFormatSpeedLimit } from '../hooks/useFormatSpeed'
 import { useDownloadSchedule } from '../hooks/useDownloadSchedule'
 import { ScreenFooter } from './ScreenFooter'
 import { ThemeToggle } from './ThemeToggle'
@@ -49,11 +49,28 @@ function SpeedUnitToggle(): React.JSX.Element {
   )
 }
 
-/** Along the bottom of every screen: the room left where downloads are saved, the queue, the
- * slow mode switch, and view preferences. Speeds and their limits are left to the screens that
- * show them — repeated down here they only doubled up, or read as a limit with no cause. */
+/** Along the bottom of every screen: the total speeds down and up, the room left where downloads
+ * are saved, the queue, the slow mode switch, and view preferences. */
 export function StatusBar(): React.JSX.Element {
+  const formatSpeed = useFormatSpeed()
   const formatSpeedLimit = useFormatSpeedLimit()
+  // Numbers, not the downloads: an unchanged total doesn't re-render the footer.
+  const down = useAppStore((store) =>
+    Object.values(store.downloads).reduce(
+      (sum, download) => sum + (download.status === 'downloading' ? download.speedBytesPerSec : 0),
+      0
+    )
+  )
+  const up = useAppStore((store) =>
+    Object.values(store.downloads).reduce(
+      (sum, download) =>
+        sum +
+        (download.kind === 'torrent' && download.status !== 'paused'
+          ? download.uploadSpeedBytesPerSec
+          : 0),
+      0
+    )
+  )
   const { message } = useDownloadSchedule()
   // A count, not the downloads: progress ticks don't re-render the footer.
   const waiting = useAppStore(
@@ -90,6 +107,13 @@ export function StatusBar(): React.JSX.Element {
 
   return (
     <ScreenFooter className="gap-4 font-mono text-[11.5px] text-muted-foreground">
+      <span
+        aria-label="Total speed"
+        className="flex shrink-0 items-center gap-3 rounded-md border-[0.5px] border-border px-2 py-1 tabular-nums"
+      >
+        <span className={down > 0 ? 'text-foreground' : undefined}>↓ {formatSpeed(down)}</span>
+        <span className={up > 0 ? 'text-foreground' : undefined}>↑ {formatSpeed(up)}</span>
+      </span>
       <span className="min-w-0 flex-1 truncate tabular-nums">{status.join(' · ')}</span>
       {message && <span className="truncate">{message}</span>}
       {/* Controls, most-flipped first: the edge holds the set-once view preferences. */}
