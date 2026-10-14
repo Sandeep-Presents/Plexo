@@ -2,7 +2,7 @@
 
 [![Sponsor](https://img.shields.io/badge/Sponsor-GitHub-ea4aaa?logo=githubsponsors)](https://github.com/sponsors/anmolkapil)
 
-Plexo is a download manager for Windows, macOS, and Linux that downloads one file over several internet connections at the same time. If your computer has Wi-Fi and a phone tethered over USB, Plexo uses both for the same download. It handles direct links, magnet links, and `.torrent` files, with a queue, a downloads list, and speed and data limits for each network.
+Plexo is a download manager for Windows, macOS, and Linux that downloads one file over several network adapters at the same time, so each adapter's internet connection adds to the speed. If your computer has Wi-Fi and a phone tethered over USB, Plexo uses both for the same download. It handles direct links, magnet links, and `.torrent` files, with a queue, a downloads list, and speed and data limits for each network.
 
 https://github.com/user-attachments/assets/e57728f4-fb63-441f-839c-174eef954b17
 
