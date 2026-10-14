@@ -6,7 +6,7 @@ import type { BrowserContext, ProbeResult } from '../../shared/types'
 import { testKnobs } from '../testKnobs'
 import { requestHeaders } from './browserContext'
 import { parseContentDispositionFilename } from './contentDisposition'
-import { describeNzb, downloadNzbFile, readNzbFile } from './nzb/nzbFile'
+import { describeNzb, downloadNzbFile, indexerError, readNzbFile, sniffXml } from './nzb/nzbFile'
 import {
   describeTorrent,
   downloadTorrentFile,
@@ -181,6 +181,19 @@ export async function probeUrl(rawUrl: string, browser?: BrowserContext): Promis
       requestHeaders(current, browser)
     )
     return describeNzb(nzbFile, finalUrl, suggestedFileName)
+  }
+  // An indexer's API answers in XML either way: an NZB it doesn't label as one, or an error (a
+  // wrong API key, its daily limit reached) where the NZB would be. Its start tells which.
+  if (/xml/i.test(headerValue(response.headers, 'content-type') ?? '')) {
+    const finalUrl = current.toString()
+    const headers = requestHeaders(current, browser)
+    const start = await sniffXml(finalUrl, PROBE_TIMEOUT_MS, headers)
+    const refusal = indexerError(start)
+    if (refusal) throw new Error(refusal)
+    if (/<(?:[\w-]+:)?nzb\b/i.test(start)) {
+      const nzbFile = await downloadNzbFile(finalUrl, PROBE_TIMEOUT_MS, headers)
+      return describeNzb(nzbFile, finalUrl, suggestedFileName)
+    }
   }
 
   const contentRange = headerValue(response.headers, 'content-range')

@@ -256,6 +256,48 @@ export async function readNzbFile(path: string): Promise<Uint8Array> {
   }
 }
 
+/** How much of an XML answer is read to tell an NZB from an indexer's error. */
+const SNIFF_BYTES = 64 * 1024
+
+/** The start of what `url` answers, as text: enough to see what kind of XML it is. */
+export async function sniffXml(
+  url: string,
+  timeoutMs: number,
+  headers: Record<string, string>
+): Promise<string> {
+  const stop = new AbortController()
+  const response = await fetch(url, {
+    headers,
+    signal: AbortSignal.any([stop.signal, AbortSignal.timeout(timeoutMs)])
+  })
+  if (!response.ok || !response.body) {
+    throw new Error(`Server responded with status ${response.status}`)
+  }
+  const chunks: Uint8Array[] = []
+  let total = 0
+  try {
+    for await (const chunk of response.body) {
+      chunks.push(chunk)
+      total += chunk.length
+      if (total >= SNIFF_BYTES) break
+    }
+  } finally {
+    stop.abort()
+  }
+  return Buffer.concat(chunks).subarray(0, SNIFF_BYTES).toString('utf8')
+}
+
+/** An indexer's refusal, as its (Newznab) API sends one in place of the NZB:
+ * `<error code="100" description="Incorrect user credentials"/>`. Null when it isn't one. */
+export function indexerError(xml: string): string | null {
+  const error = /<error\b([^>]*)\/?>/i.exec(xml)
+  if (!error || /<(?:[\w-]+:)?nzb\b/i.test(xml)) return null
+  const attrs = attributes(error[1])
+  const description = attrs.get('description')?.trim()
+  const code = attrs.get('code')?.trim()
+  return `The indexer refused this link: ${description || 'no reason given'}${code ? ` (error ${code})` : ''}`
+}
+
 /** An NZB file a link points at, as an indexer serves it. `headers` are for `url`. */
 export async function downloadNzbFile(
   url: string,

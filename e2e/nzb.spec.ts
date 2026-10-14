@@ -109,6 +109,34 @@ test.describe('NZB downloads', () => {
     }
   })
 
+  test('an indexer’s answer in plain XML: an NZB is taken, its error is shown', async ({
+    plexo
+  }) => {
+    const server = await newsServer()
+    await useServer(plexo, server)
+    const indexer: Server = createServer((request, response) => {
+      response.writeHead(200, { 'Content-Type': 'application/xml; charset=utf-8' })
+      response.end(
+        request.url?.includes('id=limit')
+          ? '<?xml version="1.0" encoding="UTF-8"?>\n<error code="500" description="Request limit reached"/>'
+          : server.nzb()
+      )
+    })
+    await new Promise<void>((resolve) => indexer.listen(0, '127.0.0.1', resolve))
+    try {
+      const { port } = indexer.address() as AddressInfo
+      await expect(
+        plexo.api.probeUrl(`http://127.0.0.1:${port}/api?t=get&id=limit&apikey=secret`)
+      ).rejects.toThrow(/The indexer refused this link: Request limit reached \(error 500\)/)
+      const probe = await plexo.api.probeUrl(
+        `http://127.0.0.1:${port}/api?t=get&id=1&apikey=secret`
+      )
+      expect(probe.kind).toBe('nzb')
+    } finally {
+      indexer.close()
+    }
+  })
+
   test('articles the server doesn’t have are left as gaps, and counted', async ({ plexo }) => {
     const server = await newsServer({
       missing: (article) => article.file === 0 && (article.number === 3 || article.number === 7)
