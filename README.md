@@ -13,8 +13,7 @@
   <a href="https://getplexo.app">Download</a> ·
   <a href="#features">Features</a> ·
   <a href="#how-it-works">How it works</a> ·
-  <a href="#build-from-source">Build</a> ·
-  <a href="https://github.com/sponsors/anmolkapil">Sponsor</a>
+  <a href="#build-from-source">Build</a>
 </p>
 
 <p align="center">
@@ -25,44 +24,50 @@
   <a href="LICENSE"><img src="https://img.shields.io/github/license/anmolkapil/plexo" alt="MIT license"></a>
 </p>
 
-https://github.com/user-attachments/assets/e57728f4-fb63-441f-839c-174eef954b17
+<p align="center">
+  <a href="https://ko-fi.com/I5Q128RXSP"><img src="https://ko-fi.com/img/githubbutton_sm.svg" alt="Buy me a coffee on Ko-fi"></a>
+</p>
 
+<p align="center">
+  For anything private, email <a href="mailto:hello@getplexo.app"><strong>hello@getplexo.app</strong></a>
+</p>
+
+https://github.com/user-attachments/assets/e57728f4-fb63-441f-839c-174eef954b17
 
 ## Features
 
-### Combine your connections
+### Multi-network downloads
 
-- **Every network at once.** Download one file over Wi-Fi, Ethernet and a tethered phone together, and their speeds add up. No VPN or driver required.
-- **Smart splitting.** The faster network takes on more of the file, so a slow one never holds the download back.
-- **Fast to the finish.** Lagging pieces near the end are fetched again on a free connection, so downloads don't crawl at 99%.
-- **Adapts as it goes.** Eases off when a server or a hard drive can't keep up, then speeds back up.
+- Combine multiple internet connections for faster downloads
+- Enable or disable networks during a download
+- Download file chunks in parallel across connections
+- Balance chunks across connections, with faster networks handling more of the download
+- Automatically adjust parallel streams to network, server and disk performance
+- Race slow chunks on idle connections to avoid a slow finish
+- View live speeds, time remaining and per-network progress
 
-### Downloads that don't break
+### Browser integration
 
-- **Pause and resume.** Stop any download and pick it up later, even after restarting your computer.
-- **Picks up after sleep.** Downloads carry on by themselves when your computer wakes, and Plexo keeps it awake while they run.
-- **Fix expired links.** Paste a fresh link to the same file and the download continues where it stopped.
-- **No corrupt files.** If the file changed on the server, Plexo tells you instead of joining two versions.
+- Capture downloads or send individual links to Plexo
+- Download files using your browser’s authenticated session
+- Exclude websites and skip small files
 
-### Torrents
+### Download management
 
-- **Magnet links and `.torrent` files.** Paste a link or open a file, and the torrent downloads over all your networks.
-- **Choose files.** Pick what to download before it starts, and change your mind while it runs.
-- **Your torrent app stays the default.** Plexo never takes over magnet links or `.torrent` files.
+- Download direct links, magnet links and `.torrent` files
+- Select torrent files before or during a download
+- Pause and resume supported downloads across restarts
+- Automatically reconnect downloads after sleep
+- Replace expired links without losing progress
+- Queue downloads and configure concurrent downloads
+- Pause, resume, retry or remove downloads in bulk
 
-### Speed, data and schedule
+### Bandwidth controls
 
-- **Speed limits.** Cap all downloads or one network, or switch on Slow mode while you're on a call.
-- **Data allowances.** Set a daily, weekly or monthly limit per network, so your mobile plan lasts.
-- **Schedule.** Run downloads only in a time window, such as a free-data night plan.
-- **Queue.** Add as many downloads as you like, and up to four run at once.
-
-### Everyday comforts
-
-- **Browser extension.** Send downloads from Chrome straight to Plexo, including files behind a login. Get it on the [Chrome Web Store](https://chromewebstore.google.com/detail/giejimhiglmjfhbjkikgobbcinpgacmg).
-- **Live view.** Watch each network's speed, with names you recognize, like Wi-Fi or iPhone, that you can rename and recolor.
-- **Notifications.** Know when a download finishes or fails.
-- **Automatic updates.** New versions download in the background and install when you restart.
+- Set global and per-network speed limits
+- Switch to Slow mode for calls and streaming
+- Set daily, weekly or monthly data allowances
+- Schedule downloads by time and day
 
 ## Troubleshooting
 
@@ -139,53 +144,42 @@ Thanks to [@XiaoMiku01](https://github.com/XiaoMiku01) for building and open-sou
 
 ## How it works
 
-Your computer sends everything through one network, even when several are connected. Plexo opens its own connections on each network you pick and splits the download between them.
+Plexo downloads different parts of the same file through each internet connection you select, then assembles them on disk.
 
-```text
-              ┌── Wi-Fi ─────── blocks 1, 3, 4, 6 ──┐
-file.iso ─────┤                                     ├──→ file.iso
-              └── USB tether ── blocks 2, 5 ────────┘
-```
+For direct downloads, Plexo uses HTTP range requests to fetch chunks in parallel. Streams take new chunks from a shared queue as they finish, so faster connections handle more of the file. Plexo adjusts stream counts to network, server and disk performance. Near the end, idle streams can race slow chunks; the first to finish wins. Servers without range support use a single stream.
 
-- **Direct downloads**: the file is cut into blocks, and each network fetches several at once using HTTP range requests. A connection that finishes takes the next block, so a faster network ends up doing more.
-- **Torrents**: each peer connects through one of your networks, and new peers go to the one with the fewest.
+For torrents, Plexo distributes peer connections across your selected networks. New peers connect through the network with the fewest peers.
 
-Plexo combines networks for its own downloads only, not for other apps. It installs no VPN, driver, or kernel extension, and needs no administrator rights.
+Each network needs its own internet connection to add bandwidth. Plexo combines connections for its own downloads and requires no VPN or virtual network adapter.
 
 ## Build from source
 
-You need Node.js 22.12 or later and npm 9 or later.
+You need Node.js 22.13 or later and npm 9 or later.
 
 ```bash
 git clone https://github.com/anmolkapil/plexo.git
 cd plexo
-npm install
+npm ci
 npm run dev
 ```
 
-| Command | What it does |
-| --- | --- |
-| `npm run test:e2e:smoke` | Playwright smoke tests |
-| `npm run test:e2e` | The full end-to-end suite |
-| `npm run build:mac` | Writes `dist/mac/Plexo.app` |
-| `npm run build:win` | Writes the Windows installer to `dist/` (run from PowerShell) |
-| `npm run build:unpack` | Writes a portable `dist/win-unpacked/plexo.exe` |
-| `npm run build:linux` | Writes the AppImage and `.deb` packages to `dist/` |
+| Command                   | What it does                                                  |
+| ------------------------- | ------------------------------------------------------------- |
+| `npm run test:e2e:smoke`  | Playwright smoke tests                                        |
+| `npm run test:e2e`        | The full end-to-end suite                                     |
+| `npm run build:mac`       | Creates macOS packages in `dist/`                             |
+| `npm run build:win`       | Creates the Windows installer in `dist/`                      |
+| `npm run build:unpack`    | Creates an unpacked app for the current platform in `dist/`   |
+| `npm run build:linux`     | Creates AppImage, `.deb` and `.rpm` packages in `dist/`       |
+| `npm run build:extension` | Builds the Chrome and Firefox extensions in `extension/dist/` |
 
-Local builds are unsigned. [CONTRIBUTING.md](CONTRIBUTING.md#end-to-end-tests) covers test options and debugging flags.
-
-Plexo is built with Electron, React 19, TypeScript, Tailwind CSS v4, Base UI, Zustand, WebTorrent, and Lucide icons.
+Run platform packaging commands on the corresponding operating system. Local builds are unsigned unless signing credentials are configured. [CONTRIBUTING.md](CONTRIBUTING.md) covers packaging requirements, extension setup and testing.
 
 ## Contributing
 
-Contributions are welcome. Areas that need help:
+Start with [open issues](https://github.com/anmolkapil/plexo/issues), or contribute a reproducible bug report, a fix, network compatibility testing or documentation improvements.
 
-- Download and torrent throughput
-- Network adapter names on Linux
-- Testing with 5G tethering, Wi-Fi 6, and 10 GbE
-- The interface and documentation
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, code style, and how to open a pull request. Have an idea? [Suggest a feature](https://github.com/anmolkapil/plexo/issues).
+See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, required checks and pull request guidance. For a substantial feature, [open an issue](https://github.com/anmolkapil/plexo/issues/new) to discuss the approach before implementing it.
 
 ## Acknowledgements
 
