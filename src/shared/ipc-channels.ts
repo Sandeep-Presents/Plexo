@@ -34,5 +34,8 @@ export const IpcChannels = {
   dismissLink: 'app:dismiss-link',
   updateState: 'update:state',
   updateStateChanged: 'update:state-changed',
-  showUpdateMenu: 'update:show-menu'
+  showUpdateMenu: 'update:show-menu',
+  setWhenDone: 'download:set-when-done',
+  whenDoneChanged: 'download:when-done-changed',
+  startNext: 'download:start-next'
 } as const

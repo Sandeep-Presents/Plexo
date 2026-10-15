@@ -1,4 +1,5 @@
 import type { DownloadState, FinishedDownload } from '@shared/types'
+import { CHECKSUM_LABEL } from '@shared/checksum'
 import { HeroBand } from '../components/HeroBand'
 import { DetailHeader } from '../components/DetailHeader'
 import { ThroughputChart } from '../components/ThroughputChart'
@@ -14,8 +15,7 @@ import {
 } from '../utils/format'
 import { useFormatSpeed } from '../hooks/useFormatSpeed'
 
-const sectionHeaderClass =
-  'font-mono text-[10px] leading-none tracking-[0.16em] text-muted-foreground uppercase'
+const sectionHeaderClass = 'text-[11.5px] leading-none font-semibold text-muted-foreground'
 
 export function CompleteScreen({
   download
@@ -88,8 +88,8 @@ export function CompleteScreen({
             </div>
           </div>
           <div className="flex flex-col items-end gap-[5px]">
-            <div className="font-mono text-[9px] leading-none font-medium tracking-[0.16em] text-muted-foreground">
-              AVERAGE
+            <div className="text-[11.5px] leading-none font-semibold text-muted-foreground">
+              Average speed
             </div>
             <div className="flex items-baseline gap-1.5">
               <div className="font-mono text-[26px] leading-[0.9] font-semibold tracking-[-0.02em] tabular-nums text-foreground">
@@ -127,7 +127,7 @@ export function CompleteScreen({
               index > 0 ? 'border-l-[0.5px] border-border' : ''
             }`}
           >
-            <div className="font-mono text-[9px] leading-none font-medium tracking-[0.14em] text-muted-foreground uppercase">
+            <div className="text-[11.5px] leading-none font-medium text-muted-foreground">
               {stat.label}
             </div>
             <div className="font-mono text-[14px] leading-none font-medium tabular-nums">
@@ -183,6 +183,9 @@ export function CompleteScreen({
             `written in ${totalChunkCount} ${isTorrent ? 'pieces' : 'chunks'}`,
             // What its peers got from it while it downloaded.
             isTorrent && `uploaded ${formatBytes(download.bytesUploaded ?? 0)}`,
+            download.kind === 'http' &&
+              download.checksum &&
+              `${CHECKSUM_LABEL[download.checksum.algorithm]} checksum matched`,
             `${totalRetries} ${totalRetries === 1 ? 'retry' : 'retries'}`
           ]
             .filter(Boolean)

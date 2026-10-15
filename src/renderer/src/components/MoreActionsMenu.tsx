@@ -1,4 +1,4 @@
-import { Ellipsis } from 'lucide-react'
+import { Ellipsis, EllipsisVertical } from 'lucide-react'
 import { Fragment } from 'react'
 import type { AvailableAction } from '../utils/downloadActions'
 import { useDownloadActions } from './downloadActionsContext'
@@ -18,10 +18,17 @@ import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip'
  * nothing to offer. */
 export function MoreActionsMenu({
   groups,
-  disabled = false
+  disabled = false,
+  label = 'More actions',
+  variant = 'secondary',
+  vertical = false
 }: {
   groups: AvailableAction[][]
   disabled?: boolean
+  label?: string
+  variant?: 'secondary' | 'ghost'
+  /** A row's ⋮ rather than the toolbar's …. */
+  vertical?: boolean
 }): React.JSX.Element | null {
   const { perform } = useDownloadActions()
   if (groups.length === 0) return null
@@ -35,17 +42,17 @@ export function MoreActionsMenu({
                 <Button
                   type="button"
                   size="icon-sm"
-                  variant="secondary"
-                  aria-label="More actions"
+                  variant={variant}
+                  aria-label={label}
                   disabled={disabled}
                 >
-                  <Ellipsis />
+                  {vertical ? <EllipsisVertical /> : <Ellipsis />}
                 </Button>
               }
             />
           }
         />
-        <TooltipContent>More actions</TooltipContent>
+        <TooltipContent>{label}</TooltipContent>
       </Tooltip>
       <DropdownMenuContent align="end" className="min-w-52">
         {groups.map((group, index) => (

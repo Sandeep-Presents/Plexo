@@ -39,8 +39,20 @@ const ids = (items: DownloadItem[]): ActionId[] =>
 
 test.describe('what each state offers', () => {
   test('downloading and queued', () => {
-    for (const status of ['downloading', 'queued'] as const)
-      expect(ids([download({ status })])).toEqual(['pause', 'reveal', 'copy', 'cancel'])
+    expect(ids([download({ status: 'downloading' })])).toEqual([
+      'pause',
+      'reveal',
+      'copy',
+      'cancel'
+    ])
+    // Waiting its turn, it can also go first in line.
+    expect(ids([download({ status: 'queued' })])).toEqual([
+      'pause',
+      'next',
+      'reveal',
+      'copy',
+      'cancel'
+    ])
   })
 
   test('paused', () => {

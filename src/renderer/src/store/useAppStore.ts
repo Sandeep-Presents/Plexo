@@ -10,11 +10,32 @@ import type {
   NetworkPreferences,
   PendingLink,
   SpeedUnit,
-  ThemeSource
+  ThemeSource,
+  WhenDone
 } from '@shared/types'
 import { create } from 'zustand'
+import type { FileCategory } from '../utils/format'
 
 export type DownloadFilter = 'all' | 'progress' | 'finished' | 'failed'
+export type TypeFilter = 'all' | FileCategory
+export type DownloadSort = 'newest' | 'oldest' | 'name' | 'size'
+
+/** A view preference kept in this window's storage; the default when there's none. */
+function remembered<T extends string>(key: string, fallback: T): T {
+  try {
+    return (localStorage.getItem(key) as T | null) ?? fallback
+  } catch {
+    return fallback
+  }
+}
+
+function remember(key: string, value: string): void {
+  try {
+    localStorage.setItem(key, value)
+  } catch {
+    // Not remembered next launch; the store still has it.
+  }
+}
 
 type LoadStatus = 'idle' | 'loading' | 'ready' | 'error'
 
@@ -41,6 +62,10 @@ interface AppStore {
   view: View
   downloadFilter: DownloadFilter
   setDownloadFilter: (filter: DownloadFilter) => void
+  typeFilter: TypeFilter
+  setTypeFilter: (filter: TypeFilter) => void
+  downloadSort: DownloadSort
+  setDownloadSort: (sort: DownloadSort) => void
   downloadSchedule: DownloadSchedule | undefined
   /** The New download dialog, over whatever the window shows. */
   newDownloadOpen: boolean
@@ -66,6 +91,10 @@ interface AppStore {
   startedUrl: string
   /** Persisted — the last folder picked, falling back to downloadsDir. */
   destinationDir: string
+  /** Persisted — new downloads go in a subfolder by type (see TYPE_FOLDERS). */
+  sortByType: boolean
+  /** This session only, kept by main: what happens once every download is done. */
+  whenDone: WhenDone
 
   /** Asks the main process for the network list now; it also pushes every change. */
   loadInterfaces: () => Promise<void>
@@ -96,6 +125,10 @@ interface AppStore {
   setSpeedUnit: (unit: SpeedUnit) => void
   setDraftUrl: (url: string) => void
   setDestinationDir: (dir: string) => void
+  setSortByType: (on: boolean) => void
+  setWhenDone: (action: WhenDone) => void
+  /** As main says it is now, e.g. back to nothing once it's done. */
+  receiveWhenDone: (action: WhenDone) => void
 }
 
 // Settings saved by the main process, read once before the first paint (see InitialState).
@@ -126,6 +159,16 @@ export const useAppStore = create<AppStore>((set, get) => ({
   view: { name: 'list' },
   downloadFilter: 'all',
   setDownloadFilter: (downloadFilter) => set({ downloadFilter }),
+  typeFilter: remembered<TypeFilter>('typeFilter', 'all'),
+  setTypeFilter: (typeFilter) => {
+    set({ typeFilter })
+    remember('typeFilter', typeFilter)
+  },
+  downloadSort: remembered<DownloadSort>('downloadSort', 'newest'),
+  setDownloadSort: (downloadSort) => {
+    set({ downloadSort })
+    remember('downloadSort', downloadSort)
+  },
   downloadSchedule: initial.downloadSchedule,
   newDownloadOpen: false,
   downloadsAtOnce: initial.downloadsAtOnce,
@@ -140,6 +183,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
   formKey: 0,
   startedUrl: '',
   destinationDir: initial.destinationDir ?? initial.downloadsDir,
+  sortByType: initial.sortByType ?? false,
+  whenDone: 'nothing',
 
   loadInterfaces: async () => {
     // A re-scan keeps showing the last result rather than flashing back to 'loading'.
@@ -273,5 +318,14 @@ export const useAppStore = create<AppStore>((set, get) => ({
   setDestinationDir: (destinationDir) => {
     set({ destinationDir })
     persist({ destinationDir })
-  }
+  },
+  setSortByType: (sortByType) => {
+    set({ sortByType })
+    persist({ sortByType })
+  },
+  setWhenDone: (whenDone) => {
+    set({ whenDone })
+    window.plexo.setWhenDone(whenDone).catch(() => set({ whenDone: 'nothing' }))
+  },
+  receiveWhenDone: (whenDone) => set({ whenDone })
 }))

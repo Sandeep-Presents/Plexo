@@ -1,15 +1,20 @@
 import { trashDownload } from './trashDownload'
 import { describeError } from '../../shared/errors'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
+import { execFile } from 'node:child_process'
+import { createReadStream } from 'node:fs'
+import { pipeline } from 'node:stream/promises'
 import { lstat, readFile, readdir, rename, rm, stat, statfs, writeFile } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, sep } from 'node:path'
 import type { BrowserWindow } from 'electron'
 import { app, Notification, powerSaveBlocker, safeStorage, shell } from 'electron'
 import { scheduleWindow } from '../../shared/downloadSchedule'
+import { CHECKSUM_LABEL, parseChecksum, type Checksum } from '../../shared/checksum'
 import { IpcChannels } from '../../shared/ipc-channels'
 import {
   DOWNLOADS_AT_ONCE,
   SPEED_HISTORY_SECONDS,
+  WHEN_DONE,
   type AppSettings,
   type BrowserContext,
   type DownloadSchedule,
@@ -32,7 +37,8 @@ import {
   type TorrentDownloadState,
   type TorrentFileEntry,
   type TorrentInfo,
-  type TorrentPieceState
+  type TorrentPieceState,
+  type WhenDone
 } from '../../shared/types'
 import { Limits } from '../network/limits'
 import { loadSettings } from '../settings'
@@ -338,6 +344,42 @@ function formatGigabytes(bytes: number): string {
 }
 
 /** The staging file is on the destination volume and becomes the final file by rename. */
+/** A file's hash, as lowercase hex. */
+async function hashFile(path: string, algorithm: Checksum['algorithm']): Promise<string> {
+  const hash = createHash(algorithm)
+  await pipeline(createReadStream(path), hash)
+  return hash.digest('hex')
+}
+
+/** How long Plexo waits, saying so, before it quits, sleeps or shuts down when downloads finish:
+ * time to stop it. */
+const WHEN_DONE_GRACE_MS = 60_000
+
+const WHEN_DONE_VERB: Record<Exclude<WhenDone, 'nothing'>, string> = {
+  quit: 'quit',
+  sleep: 'put the computer to sleep',
+  shutdown: 'shut down the computer'
+}
+
+/** The OS command that sleeps or shuts down this computer. */
+function powerCommand(action: 'sleep' | 'shutdown'): [string, string[]] {
+  if (process.platform === 'win32') {
+    // ponytail: SetSuspendState hibernates instead where hibernation is on; a native call if that matters.
+    return action === 'sleep'
+      ? ['rundll32.exe', ['powrprof.dll,SetSuspendState', '0,1,0']]
+      : ['shutdown', ['/s', '/t', '0']]
+  }
+  if (process.platform === 'darwin') {
+    return action === 'sleep'
+      ? ['pmset', ['sleepnow']]
+      : ['osascript', ['-e', 'tell application "System Events" to shut down']]
+  }
+  return ['systemctl', [action === 'sleep' ? 'suspend' : 'poweroff']]
+}
+
+/** The finished file isn't the one the site lists: it's not published, and nothing of it kept. */
+class ChecksumMismatchError extends Error {}
+
 async function ensureDiskSpace(destinationDir: string, requiredBytes: number): Promise<void> {
   if (requiredBytes <= 0) return // unknown size — nothing to check against
   const stats = await statfs(destinationDir)
@@ -366,6 +408,9 @@ export class DownloadManager {
   private downloadsAtOnce = DOWNLOADS_AT_ONCE.default
   /** Speed and data limits, for every download together. */
   readonly limits = new Limits(() => this.limitsChanged())
+  /** What to do once nothing is left to download, and the countdown to it once it's due. */
+  private whenDone: WhenDone = 'nothing'
+  private whenDoneTimer?: NodeJS.Timeout
 
   constructor(
     private getWindow: () => BrowserWindow | null,
@@ -959,6 +1004,11 @@ export class DownloadManager {
       }
       runtime = this.newTorrentRuntime(state, requestPayload, file, pieces, torrentFile)
     } else {
+      const checksum =
+        requestPayload.checksum === undefined ? undefined : parseChecksum(requestPayload.checksum)
+      if (checksum === null) {
+        throw new Error('That checksum isn’t an MD5, SHA-1, SHA-256 or SHA-512 hash.')
+      }
       const target = new URL(requestPayload.url)
       const usable = compatibleInterfaces(
         selected,
@@ -1001,7 +1051,8 @@ export class DownloadManager {
         startedAt: Date.now(),
         ...(requestPayload.browser && {
           fromBrowser: requestPayload.browser.name ?? 'your browser'
-        })
+        }),
+        ...(checksum && { checksum })
       }
       runtime = this.newHttpRuntime(
         state,
@@ -1024,7 +1075,60 @@ export class DownloadManager {
 
   /** Runs the download, and once the run ends makes room for the next one queued. */
   private launch(runtime: DownloadRuntime): void {
-    runtime.runPromise = this.run(runtime).finally(() => this.pump())
+    runtime.runPromise = this.run(runtime).finally(() => {
+      this.pump()
+      this.checkAllDone(runtime)
+    })
+  }
+
+  /** Changing it, to anything, stops a countdown already under way. */
+  setWhenDone(action: WhenDone): void {
+    if (!WHEN_DONE.includes(action)) throw new Error('Unknown action')
+    clearTimeout(this.whenDoneTimer)
+    this.whenDoneTimer = undefined
+    this.whenDone = action
+    const window = this.getWindow()
+    if (window && !window.isDestroyed()) {
+      window.webContents.send(IpcChannels.whenDoneChanged, action)
+    }
+  }
+
+  /** Puts a queued download first in line, to start when the next one ends. */
+  startNext(id: string): void {
+    const runtime = this.runtimes.get(id)
+    if (runtime?.state.status !== 'queued') return
+    this.enqueue(runtime, true)
+    this.pushUpdate(runtime)
+  }
+
+  private nothingLeft(): boolean {
+    return ![...this.runtimes.values()].some(
+      ({ state }) => state.status === 'downloading' || state.status === 'queued'
+    )
+  }
+
+  /** A run ended by finishing or failing, not by a pause: if it was the last, what the user
+   * chose for then is due, after a minute's notice. */
+  private checkAllDone(runtime: DownloadRuntime): void {
+    const { status } = runtime.state
+    if (this.whenDone === 'nothing' || this.whenDoneTimer || this.suspending) return
+    if ((status !== 'completed' && status !== 'error') || !this.nothingLeft()) return
+    const action = this.whenDone
+    this.notify(
+      'Downloads finished',
+      `Plexo will ${WHEN_DONE_VERB[action]} in 1 minute. Open Plexo to stop it.`
+    )
+    this.whenDoneTimer = setTimeout(() => {
+      this.whenDoneTimer = undefined
+      if (this.whenDone !== action || !this.nothingLeft()) return
+      this.setWhenDone('nothing')
+      if (testKnobs.userDataDir) return
+      if (action === 'quit') return app.quit()
+      const [command, args] = powerCommand(action)
+      execFile(command, args, (error) => {
+        if (error) console.error('[plexo] when done', error)
+      })
+    }, WHEN_DONE_GRACE_MS)
   }
 
   async pause(id: string, forSchedule = false): Promise<void> {
@@ -1707,6 +1811,12 @@ export class DownloadManager {
       if (unitsOf(runtime).some((unit) => !isDone(unit))) {
         throw new Error('Download is incomplete — refusing to publish the file')
       }
+      const { checksum } = runtime.state as Partial<HttpDownloadState>
+      if (checksum && (await hashFile(runtime.file.path, checksum.algorithm)) !== checksum.value) {
+        throw new ChecksumMismatchError(
+          `The downloaded file doesn’t match its ${CHECKSUM_LABEL[checksum.algorithm]} checksum, so it wasn’t saved. Check the checksum, or download it again.`
+        )
+      }
       await this.persistNow(runtime)
       const publishedPath = await runtime.file.publish(
         runtime.state.destinationPath,
@@ -1736,10 +1846,19 @@ export class DownloadManager {
         runtime.state.bytesDownloaded
       await this.persistNow(runtime)
       await runtime.file.discardLeftover().catch(() => {})
-      this.notify('Download complete', `${runtime.state.fileName} has finished downloading.`)
+      const { id } = runtime.state
+      this.notify(
+        'Download complete',
+        `${runtime.state.fileName} has finished downloading.`,
+        () => void this.reveal(id)
+      )
     } catch (error) {
       runtime.state.status = 'error'
       runtime.state.error = error instanceof Error ? error.message : String(error)
+      if (error instanceof ChecksumMismatchError) {
+        runtime.state.resumable = false
+        await runtime.file.discard().catch(() => {})
+      }
       this.notify(
         'Download failed',
         `${runtime.state.fileName}: ${describeError(runtime.state.error)}`
@@ -1856,11 +1975,13 @@ export class DownloadManager {
     runtime.transfer.reconcile()
   }
 
-  private notify(title: string, body: string): void {
+  /** Clicking it brings the window forward, and does `onClick` too when given. */
+  private notify(title: string, body: string, onClick?: () => void): void {
     if (testKnobs.userDataDir || !Notification.isSupported()) return
     try {
       const notification = new Notification({ title, body })
       notification.on('click', () => {
+        onClick?.()
         const window = this.getWindow()
         if (window && !window.isDestroyed()) {
           if (window.isMinimized()) window.restore()

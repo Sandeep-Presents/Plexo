@@ -1,3 +1,5 @@
+import type { Checksum } from './checksum'
+
 export type NetworkInterfaceKind = 'wifi' | 'usb' | 'ethernet' | 'bridge' | 'other'
 export type IpFamily = 4 | 6
 
@@ -234,6 +236,8 @@ export interface HttpDownloadState extends DownloadStateBase {
   /** The disk can't keep up: most streams are waiting for their writes (see concurrency.ts). */
   diskLimited?: boolean
   fromBrowser?: string
+  /** The hash it's checked against before it's published; a finished one with it matched. */
+  checksum?: Checksum
 }
 
 export interface TorrentDownloadState extends DownloadStateBase {
@@ -352,7 +356,14 @@ export interface AppSettings {
   /** How speeds are shown everywhere; sizes stay in bytes either way. */
   speedUnit?: SpeedUnit
   browserExtensionUsed?: boolean
+  /** New downloads go in a subfolder of the folder picked by their type: Videos, Music… */
+  sortByType?: boolean
 }
+
+/** What Plexo does once nothing is left downloading or queued. For this session only: it's back
+ * to nothing after it's done, and on every launch. */
+export type WhenDone = 'nothing' | 'quit' | 'sleep' | 'shutdown'
+export const WHEN_DONE: readonly WhenDone[] = ['nothing', 'quit', 'sleep', 'shutdown']
 
 /** bytes: MB/s. bits: Mbps, as internet plans and speed tests count them. */
 export type SpeedUnit = 'bytes' | 'bits'
@@ -378,6 +389,7 @@ export interface InitialState {
   speedUnit: SpeedUnit
   /** The last folder picked, if it still exists — otherwise the renderer uses downloadsDir. */
   destinationDir?: string
+  sortByType?: boolean
 }
 
 interface StartDownloadRequestBase {
@@ -398,6 +410,8 @@ export interface StartHttpDownloadRequest extends StartDownloadRequestBase {
   /** Streams per network the user picked; left out, the count is decided automatically. */
   streamsPerNetwork?: number
   browser?: BrowserContext
+  /** As pasted: the hash the finished file must have (see shared/checksum.ts). */
+  checksum?: string
 }
 
 /** The fields of chrome.cookies.Cookie that decide where it's sent. */

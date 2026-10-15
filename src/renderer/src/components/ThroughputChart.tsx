@@ -6,7 +6,7 @@ import { speedTicks } from '../utils/format'
 
 const WIDTH = 560
 const HEIGHT = 130
-const labelClass = 'font-mono text-[9px] leading-none text-muted-foreground tabular-nums'
+const labelClass = 'font-mono text-[10px] leading-none text-muted-foreground tabular-nums'
 
 interface ThroughputChartProps {
   order: Array<{ interfaceId: string; solid: string; name: string }>
@@ -136,6 +136,19 @@ export function ThroughputChart({
                 />
               ))}
             </g>
+            {/* The zero line, a little firmer than the gridlines: with nothing moving yet it's
+                what says the chart is there, rather than an empty band. */}
+            <line
+              x1={0}
+              y1={HEIGHT - 0.5}
+              x2={WIDTH}
+              y2={HEIGHT - 0.5}
+              className="text-muted-foreground"
+              stroke="currentColor"
+              strokeOpacity={0.5}
+              strokeWidth={1}
+              vectorEffect="non-scaling-stroke"
+            />
             {layers.map((layer, index) => (
               <polygon key={index} points={layer.points} fill={layer.solid} fillOpacity={0.62} />
             ))}

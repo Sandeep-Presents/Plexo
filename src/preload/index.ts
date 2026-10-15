@@ -6,7 +6,8 @@ import type {
   DownloadUpdate,
   InitialState,
   NetworkInterfaceInfo,
-  UpdateState
+  UpdateState,
+  WhenDone
 } from '../shared/types'
 
 /** Typed wrapper around ipcRenderer.invoke — the channel name picks its args/result shape out of
@@ -61,6 +62,14 @@ const plexoApi = {
   resumeFromLink: (linkId: string, downloadId: string) =>
     invoke('resumeFromLink', linkId, downloadId),
   dismissLink: (id: string) => invoke('dismissLink', id),
+  setWhenDone: (action: WhenDone) => invoke('setWhenDone', action),
+  startNext: (downloadId: string) => invoke('startNext', downloadId),
+
+  onWhenDoneChanged: (callback: (action: WhenDone) => void): (() => void) => {
+    const listener = (_event: IpcRendererEvent, action: WhenDone): void => callback(action)
+    ipcRenderer.on(IpcChannels.whenDoneChanged, listener)
+    return () => ipcRenderer.removeListener(IpcChannels.whenDoneChanged, listener)
+  },
 
   /** pendingLinks() has the new link. */
   onLinkReceived: (callback: () => void): (() => void) => {

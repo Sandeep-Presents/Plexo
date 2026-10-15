@@ -134,7 +134,8 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
         slowMode: settings.slowMode ?? false,
         slowModeSpeed: settings.slowModeSpeed ?? DEFAULT_SLOW_MODE_SPEED,
         speedUnit: settings.speedUnit ?? 'bytes',
-        destinationDir: destinationExists ? destinationDir : undefined
+        destinationDir: destinationExists ? destinationDir : undefined,
+        sortByType: settings.sortByType
       } satisfies InitialState
     } catch (error) {
       console.error('[plexo] failed to read initial state', error)
@@ -191,6 +192,10 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
     releaseLink(linkId)
   })
   handle('dismissLink', async (_event, id) => releaseLink(id))
+
+  handle('setWhenDone', async (_event, action) => manager.setWhenDone(action))
+
+  handle('startNext', async (_event, id) => manager.startNext(id))
 
   handle('readClipboardText', async () => clipboard.readText())
 
