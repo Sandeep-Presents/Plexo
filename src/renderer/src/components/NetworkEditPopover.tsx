@@ -14,6 +14,10 @@ interface NetworkEditPopoverProps {
   interfaceId: string
   interfaceKind: NetworkInterfaceKind
   osName: string
+  trigger?: React.ReactElement
+  tooltip?: string
+  defaultFocusProxy?: boolean
+  className?: string
 }
 
 const fieldLabelClass =
@@ -33,7 +37,11 @@ const PROXY_TYPES: { id: ProxyType; label: string }[] = [
 export function NetworkEditPopover({
   interfaceId,
   interfaceKind,
-  osName
+  osName,
+  trigger,
+  tooltip,
+  defaultFocusProxy,
+  className
 }: NetworkEditPopoverProps): React.JSX.Element {
   const [open, setOpen] = useState(false)
   const preference = useAppStore((store) => store.networkPreferences[interfaceId])
@@ -111,20 +119,27 @@ export function NetworkEditPopover({
           render={
             <PopoverTrigger
               render={
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-xs"
-                  aria-label="Edit network"
-                  className="shrink-0 text-muted-foreground"
-                >
-                  <Pencil className="size-3" />
-                </Button>
+                trigger ?? (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-xs"
+                    aria-label={`Edit ${visual.name}`}
+                    className={cn('shrink-0 text-muted-foreground', className)}
+                  >
+                    <Pencil className="size-3" />
+                  </Button>
+                )
               }
             />
           }
         />
-        <TooltipContent>Edit network</TooltipContent>
+        <TooltipContent>
+          {tooltip ??
+            (preference?.proxy?.enabled && preference?.proxy?.host
+              ? `Proxy active (${preference!.proxy!.type.toUpperCase()}) — click to configure`
+              : `Configure proxy or edit ${visual.name}`)}
+        </TooltipContent>
       </Tooltip>
       <PopoverContent aria-label={`Edit ${visual.name}`} className="w-[320px] gap-3 p-3">
         <div className="flex flex-col gap-[6px]">
@@ -142,7 +157,7 @@ export function NetworkEditPopover({
             }}
             placeholder={osName}
             maxLength={MAX_NETWORK_NAME_LENGTH}
-            autoFocus
+            autoFocus={!defaultFocusProxy}
             className="rounded-[6px] border border-input bg-background px-[9px] py-1.5 font-sans text-[12px] leading-[1.3] font-medium text-foreground outline-none focus-visible:border-ring"
           />
         </div>

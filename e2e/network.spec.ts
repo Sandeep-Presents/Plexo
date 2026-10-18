@@ -353,4 +353,3 @@ test('proxy settings update dynamically on reconnect @smoke', async () => {
     await new Promise<void>((resolve) => targetServer.close(() => resolve()))
   }
 })
-
