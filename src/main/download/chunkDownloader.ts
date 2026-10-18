@@ -13,6 +13,9 @@ export interface ChunkDownloadOptions {
   rangeStart: number
   /** null = open-ended range, download to end of file. */
   rangeEnd: number | null
+  /** The server doesn't take range requests, so ask for the whole file without a Range header
+   * (only valid from byte 0). Some servers refuse any Range with 403 (#131). */
+  wholeFile?: boolean
   /** The stream's connection, through the network it's bound to. */
   connection: StreamConnection
   createDestination: () => Writable
@@ -131,6 +134,7 @@ export function downloadChunk(options: ChunkDownloadOptions): Promise<void> {
     browser,
     rangeStart,
     rangeEnd,
+    wholeFile = false,
     connection,
     createDestination,
     onNetworkProgress,
@@ -206,7 +210,7 @@ export function downloadChunk(options: ChunkDownloadOptions): Promise<void> {
     // The whole file from the start needs no Range at all — and an empty file would answer
     // `bytes=0-` with 416, since it has no byte 0 to start from.
     const range: Record<string, string> =
-      rangeStart > 0 || rangeEnd !== null
+      !(wholeFile && rangeStart === 0) && (rangeStart > 0 || rangeEnd !== null)
         ? { Range: rangeEnd === null ? `bytes=${rangeStart}-` : `bytes=${rangeStart}-${rangeEnd}` }
         : {}
 

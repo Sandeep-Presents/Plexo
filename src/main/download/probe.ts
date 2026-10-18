@@ -34,11 +34,13 @@ interface ProbeResponse {
 
 /** GET with a small range: cheaper than fetching the body, and unlike HEAD it also tells us (via
  * the 206 status) whether range requests actually work. Not 1 byte: some file hosts answer a range
- * that ends at byte 0 or 1 with the whole file, while serving every real chunk as asked (#101). */
+ * that ends at byte 0 or 1 with the whole file, while serving every real chunk as asked (#101).
+ * `ranged: false` sends a plain GET instead; the body is still dropped once the headers arrive. */
 function requestFirstBytes(
   url: URL,
   deadline: number,
-  browser: BrowserContext | undefined
+  browser: BrowserContext | undefined,
+  ranged: boolean
 ): Promise<ProbeResponse> {
   return new Promise((resolve, reject) => {
     const requester = url.protocol === 'https:' ? httpsRequest : httpRequest
@@ -48,7 +50,9 @@ function requestFirstBytes(
         hostname: url.hostname.replace(/^\[|\]$/g, ''),
         port: url.port || undefined,
         path: `${url.pathname}${url.search}`,
-        headers: { ...requestHeaders(url, browser), Range: 'bytes=0-1023' }
+        headers: ranged
+          ? { ...requestHeaders(url, browser), Range: 'bytes=0-1023' }
+          : requestHeaders(url, browser)
       },
       (res) => {
         clearTimeout(timer)
@@ -92,11 +96,22 @@ async function requestFollowingRedirects(
   let response: ProbeResponse | null = null
   const deadline = Date.now() + PROBE_TIMEOUT_MS
 
+  let ranged = true
   for (let redirect = 0; redirect <= MAX_REDIRECTS; redirect += 1) {
-    response = await requestFirstBytes(current, deadline, browser)
+    response = await requestFirstBytes(current, deadline, browser, ranged)
+    // Some servers refuse any Range request with 403 while serving the same URL in full (#131).
+    // Ask once more without one: if that works, the file downloads as one stream from byte zero,
+    // which sends no Range either — the same as on a server without range support.
+    if (response.statusCode === 403 && ranged) {
+      ranged = false
+      response = await requestFirstBytes(current, deadline, browser, ranged)
+    }
     if (response.statusCode >= 300 && response.statusCode < 400) {
       const location = headerValue(response.headers, 'location')
       if (!location) break
+      if (redirect === MAX_REDIRECTS) {
+        throw new Error('Too many redirects while checking the link')
+      }
       current = new URL(location, current)
       continue
     }
