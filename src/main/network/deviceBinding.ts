@@ -1,4 +1,5 @@
 import { connect, Socket, type SocketConstructorOpts } from 'node:net'
+import { networkInterfaces } from 'node:os'
 import type { NetworkRoute } from './routes'
 
 // Linux picks a socket's outgoing interface from the routing table alone: binding to an
@@ -87,5 +88,34 @@ export function connectRoute(route: NetworkRoute, port: number): Socket {
     port,
     localAddress,
     family
+  })
+}
+
+function deviceFor(localAddress: string, host: string): string | undefined {
+  if (host === 'localhost' || host.startsWith('127.') || host === '::1') return undefined
+  for (const [device, addresses] of Object.entries(networkInterfaces())) {
+    if (addresses?.some((addr) => addr.address === localAddress)) return device
+  }
+  return undefined
+}
+
+/** A TCP connection to host:port that leaves through the interface owning `localAddress`. */
+export function connectFrom(localAddress: string, host: string, port: number): Socket {
+  const device = libc && deviceFor(localAddress, host)
+  if (!libc || !device) return connect({ host, port, localAddress })
+
+  let fd: number
+  try {
+    fd = openOnDevice(libc, device, 4)
+  } catch (error) {
+    // The interface vanished since it was listed — surface it like any other connect error.
+    const socket = new Socket()
+    process.nextTick(() => socket.destroy(error as Error))
+    return socket
+  }
+  return new Socket({ fd, manualStart: true } as SocketConstructorOpts).connect({
+    host,
+    port,
+    localAddress
   })
 }

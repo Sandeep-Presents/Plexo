@@ -1,10 +1,10 @@
 import type { HttpBlockState, HttpStreamState, NetworkStatus, SpeedUnit } from '@shared/types'
 import { useState } from 'react'
+import { useAppStore } from '../store/useAppStore'
 import { DANGER, type NetworkVisual } from '../theme'
 import type { HttpNetworkGroup, NetworkGroup, TorrentNetworkGroup } from '../utils/format'
 import { describeError, formatBytes, formatSpeedOfLimit, networkActive } from '../utils/format'
 import { useFormatSpeed } from '../hooks/useFormatSpeed'
-import { useAppStore } from '../store/useAppStore'
 import { ColorBadge } from './ColorBadge'
 import { NetworkEditPopover } from './NetworkEditPopover'
 import { TruncatedText } from './TruncatedText'
@@ -380,6 +380,9 @@ export function NetworkRow({
   const connections = group.transfer === 'http' ? group.streams : group.peers
   const isActive = networkActive(group)
   const hasError = group.status === 'failed'
+  const preference = useAppStore((store) => store.networkPreferences[group.id])
+  const proxy = preference?.proxy
+  const isProxyActive = Boolean(proxy?.enabled && proxy.host)
   const rounded = Math.round(sharePercent)
   const shareLabel = group.bytesDownloaded === 0 ? '0%' : rounded === 0 ? '<1%' : `${rounded}%`
   const noun = group.transfer === 'http' ? 'stream' : 'peer'
@@ -416,6 +419,16 @@ export function NetworkRow({
             interfaceKind={group.kind}
             osName={group.label}
           />
+          {isProxyActive && (
+            <ColorBadge
+              bg={visual.bg}
+              border={visual.border}
+              text={visual.text}
+              className="h-[15px] rounded-[3px] px-[5px] py-px font-mono text-[8.5px] font-semibold tracking-[0.06em] uppercase"
+            >
+              PROXY · {proxy!.type}
+            </ColorBadge>
+          )}
           {connections.length > 0 && (
             <Button
               type="button"
