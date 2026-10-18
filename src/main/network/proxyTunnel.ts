@@ -5,10 +5,24 @@ import { connectFrom } from './deviceBinding'
 
 const PROXY_CONNECT_TIMEOUT_MS = 15_000
 
-/** Reads exactly `length` bytes from a socket, or rejects on error, close, or timeout. */
-function readExactBytes(socket: Socket | TLSSocket, length: number): Promise<Buffer> {
+const abortError = (): DOMException => new DOMException('Aborted', 'AbortError')
+
+/** Reads exactly `length` bytes from a socket, or rejects on error, close, timeout, or abort. */
+function readExactBytes(
+  socket: Socket | TLSSocket,
+  length: number,
+  signal?: AbortSignal
+): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     let buffer = Buffer.alloc(0)
+
+    const cleanup = (): void => {
+      socket.removeListener('data', onData)
+      socket.removeListener('error', onError)
+      socket.removeListener('close', onClose)
+      socket.removeListener('timeout', onTimeout)
+      signal?.removeEventListener('abort', onAbort)
+    }
 
     const onData = (chunk: Buffer): void => {
       buffer = Buffer.concat([buffer, chunk])
@@ -33,22 +47,46 @@ function readExactBytes(socket: Socket | TLSSocket, length: number): Promise<Buf
       reject(new Error('Proxy connection closed unexpectedly'))
     }
 
-    const cleanup = (): void => {
-      socket.removeListener('data', onData)
-      socket.removeListener('error', onError)
-      socket.removeListener('close', onClose)
+    const onTimeout = (): void => {
+      cleanup()
+      socket.destroy()
+      reject(new Error('Proxy connection timed out while reading response'))
     }
+
+    const onAbort = (): void => {
+      cleanup()
+      socket.destroy()
+      reject(abortError())
+    }
+
+    if (signal?.aborted) {
+      socket.destroy()
+      return reject(abortError())
+    }
+    signal?.addEventListener('abort', onAbort, { once: true })
 
     socket.on('data', onData)
     socket.once('error', onError)
     socket.once('close', onClose)
+    socket.once('timeout', onTimeout)
   })
 }
 
 /** Reads data until `\r\n\r\n` HTTP header delimiter is reached. */
-function readHttpHeaders(socket: Socket | TLSSocket): Promise<{ headers: string; status: number }> {
+function readHttpHeaders(
+  socket: Socket | TLSSocket,
+  signal?: AbortSignal
+): Promise<{ headers: string; status: number }> {
   return new Promise((resolve, reject) => {
     let buffer = Buffer.alloc(0)
+
+    const cleanup = (): void => {
+      socket.removeListener('data', onData)
+      socket.removeListener('error', onError)
+      socket.removeListener('close', onClose)
+      socket.removeListener('timeout', onTimeout)
+      signal?.removeEventListener('abort', onAbort)
+    }
 
     const onData = (chunk: Buffer): void => {
       buffer = Buffer.concat([buffer, chunk])
@@ -76,38 +114,84 @@ function readHttpHeaders(socket: Socket | TLSSocket): Promise<{ headers: string;
       reject(new Error('Proxy connection closed while reading response headers'))
     }
 
-    const cleanup = (): void => {
-      socket.removeListener('data', onData)
-      socket.removeListener('error', onError)
-      socket.removeListener('close', onClose)
+    const onTimeout = (): void => {
+      cleanup()
+      socket.destroy()
+      reject(new Error('Proxy connection timed out while waiting for HTTP response'))
     }
+
+    const onAbort = (): void => {
+      cleanup()
+      socket.destroy()
+      reject(abortError())
+    }
+
+    if (signal?.aborted) {
+      socket.destroy()
+      return reject(abortError())
+    }
+    signal?.addEventListener('abort', onAbort, { once: true })
 
     socket.on('data', onData)
     socket.once('error', onError)
     socket.once('close', onClose)
+    socket.once('timeout', onTimeout)
   })
 }
 
 /** Establishes an HTTP CONNECT tunnel through an HTTP or HTTPS proxy. */
 async function connectHttpTunnel(
-  localAddress: string,
+  localAddress: string | undefined,
   targetHost: string,
   targetPort: number,
-  proxy: ProxyConfig
+  proxy: ProxyConfig,
+  device?: string,
+  signal?: AbortSignal
 ): Promise<Socket | TLSSocket> {
+  if (signal?.aborted) throw abortError()
   const isHttpsProxy = proxy.type === 'https'
 
   // 1. Connect TCP socket bound to interface
-  const rawSocket: Socket = connectFrom(localAddress, proxy.host, proxy.port)
+  const rawSocket: Socket = connectFrom(localAddress, proxy.host, proxy.port, device)
 
   await new Promise<void>((resolve, reject) => {
-    rawSocket.once('connect', () => resolve())
-    rawSocket.once('error', reject)
-    rawSocket.setTimeout(PROXY_CONNECT_TIMEOUT_MS, () =>
+    const cleanup = (): void => {
+      rawSocket.off('connect', onConnect)
+      rawSocket.off('error', onError)
+      rawSocket.off('timeout', onTimeout)
+      signal?.removeEventListener('abort', onAbort)
+    }
+    const onConnect = (): void => {
+      cleanup()
+      resolve()
+    }
+    const onError = (err: Error): void => {
+      cleanup()
+      rawSocket.destroy()
+      reject(err)
+    }
+    const onTimeout = (): void => {
+      cleanup()
+      rawSocket.destroy()
       reject(new Error(`Connecting to proxy ${proxy.host}:${proxy.port} timed out`))
-    )
+    }
+    const onAbort = (): void => {
+      cleanup()
+      rawSocket.destroy()
+      reject(abortError())
+    }
+
+    if (signal?.aborted) {
+      rawSocket.destroy()
+      return reject(abortError())
+    }
+    signal?.addEventListener('abort', onAbort, { once: true })
+
+    rawSocket.once('connect', onConnect)
+    rawSocket.once('error', onError)
+    rawSocket.once('timeout', onTimeout)
+    rawSocket.setTimeout(PROXY_CONNECT_TIMEOUT_MS)
   })
-  rawSocket.setTimeout(0)
 
   // 2. If HTTPS proxy, wrap in TLS to proxy first
   let proxySocket: Socket | TLSSocket = rawSocket
@@ -117,10 +201,50 @@ async function connectHttpTunnel(
         socket: rawSocket,
         servername: isIP(proxy.host) ? undefined : proxy.host
       })
-      tls.once('secureConnect', () => resolve(tls))
-      tls.once('error', reject)
+      const cleanup = (): void => {
+        tls.off('secureConnect', onSecure)
+        tls.off('error', onError)
+        tls.off('timeout', onTimeout)
+        signal?.removeEventListener('abort', onAbort)
+      }
+      const onSecure = (): void => {
+        cleanup()
+        resolve(tls)
+      }
+      const onError = (err: Error): void => {
+        cleanup()
+        tls.destroy()
+        rawSocket.destroy()
+        reject(err)
+      }
+      const onTimeout = (): void => {
+        cleanup()
+        tls.destroy()
+        rawSocket.destroy()
+        reject(new Error(`TLS handshake to proxy ${proxy.host}:${proxy.port} timed out`))
+      }
+      const onAbort = (): void => {
+        cleanup()
+        tls.destroy()
+        rawSocket.destroy()
+        reject(abortError())
+      }
+
+      if (signal?.aborted) {
+        tls.destroy()
+        rawSocket.destroy()
+        return reject(abortError())
+      }
+      signal?.addEventListener('abort', onAbort, { once: true })
+
+      tls.once('secureConnect', onSecure)
+      tls.once('error', onError)
+      tls.once('timeout', onTimeout)
+      tls.setTimeout(PROXY_CONNECT_TIMEOUT_MS)
     })
   }
+
+  proxySocket.setTimeout(PROXY_CONNECT_TIMEOUT_MS)
 
   // 3. Send HTTP CONNECT request
   let connectRequest = `CONNECT ${targetHost}:${targetPort} HTTP/1.1\r\nHost: ${targetHost}:${targetPort}\r\n`
@@ -133,7 +257,7 @@ async function connectHttpTunnel(
   proxySocket.write(connectRequest)
 
   // 4. Read HTTP 200 response
-  const { status, headers } = await readHttpHeaders(proxySocket)
+  const { status, headers } = await readHttpHeaders(proxySocket, signal)
   if (status < 200 || status >= 300) {
     proxySocket.destroy()
     if (status === 407) {
@@ -143,26 +267,62 @@ async function connectHttpTunnel(
     throw new Error(`Proxy CONNECT failed: ${firstLine}`)
   }
 
+  proxySocket.setTimeout(0)
   return proxySocket
 }
 
 /** Establishes a SOCKS5 tunnel with optional username/password authentication (RFC 1928 / RFC 1929). */
 async function connectSocks5Tunnel(
-  localAddress: string,
+  localAddress: string | undefined,
   targetHost: string,
   targetPort: number,
-  proxy: ProxyConfig
+  proxy: ProxyConfig,
+  device?: string,
+  signal?: AbortSignal
 ): Promise<Socket> {
-  const socket = connectFrom(localAddress, proxy.host, proxy.port)
+  if (signal?.aborted) throw abortError()
+  const socket = connectFrom(localAddress, proxy.host, proxy.port, device)
 
   await new Promise<void>((resolve, reject) => {
-    socket.once('connect', () => resolve())
-    socket.once('error', reject)
-    socket.setTimeout(PROXY_CONNECT_TIMEOUT_MS, () =>
+    const cleanup = (): void => {
+      socket.off('connect', onConnect)
+      socket.off('error', onError)
+      socket.off('timeout', onTimeout)
+      signal?.removeEventListener('abort', onAbort)
+    }
+    const onConnect = (): void => {
+      cleanup()
+      resolve()
+    }
+    const onError = (err: Error): void => {
+      cleanup()
+      socket.destroy()
+      reject(err)
+    }
+    const onTimeout = (): void => {
+      cleanup()
+      socket.destroy()
       reject(new Error(`Connecting to SOCKS5 proxy ${proxy.host}:${proxy.port} timed out`))
-    )
+    }
+    const onAbort = (): void => {
+      cleanup()
+      socket.destroy()
+      reject(abortError())
+    }
+
+    if (signal?.aborted) {
+      socket.destroy()
+      return reject(abortError())
+    }
+    signal?.addEventListener('abort', onAbort, { once: true })
+
+    socket.once('connect', onConnect)
+    socket.once('error', onError)
+    socket.once('timeout', onTimeout)
+    socket.setTimeout(PROXY_CONNECT_TIMEOUT_MS)
   })
-  socket.setTimeout(0)
+
+  socket.setTimeout(PROXY_CONNECT_TIMEOUT_MS)
 
   const hasAuth = Boolean(proxy.username)
   // Handshake greeting: [VER=0x05, NMETHODS, METHODS...]
@@ -171,7 +331,7 @@ async function connectSocks5Tunnel(
     : Buffer.from([0x05, 0x01, 0x00]) // No Auth (0x00)
   socket.write(greeting)
 
-  const methodResponse = await readExactBytes(socket, 2)
+  const methodResponse = await readExactBytes(socket, 2, signal)
   if (methodResponse[0] !== 0x05) {
     socket.destroy()
     throw new Error(`Invalid SOCKS5 version response (${methodResponse[0]})`)
@@ -195,7 +355,7 @@ async function connectSocks5Tunnel(
     ])
     socket.write(authRequest)
 
-    const authResponse = await readExactBytes(socket, 2)
+    const authResponse = await readExactBytes(socket, 2, signal)
     if (authResponse[1] !== 0x00) {
       socket.destroy()
       throw new Error(`SOCKS5 authentication failed on ${proxy.host}:${proxy.port}`)
@@ -224,7 +384,7 @@ async function connectSocks5Tunnel(
   socket.write(connectBuf)
 
   // Read response: [VER, REP, RSV, ATYP, BND.ADDR, BND.PORT]
-  const header = await readExactBytes(socket, 4)
+  const header = await readExactBytes(socket, 4, signal)
   const rep = header[1]
   if (rep !== 0x00) {
     socket.destroy()
@@ -246,34 +406,70 @@ async function connectSocks5Tunnel(
   // Read remaining bound address and port to clean socket buffer
   const atyp = header[3]
   if (atyp === 0x01) {
-    await readExactBytes(socket, 4 + 2) // 4 bytes IPv4 + 2 bytes port
+    await readExactBytes(socket, 4 + 2, signal) // 4 bytes IPv4 + 2 bytes port
   } else if (atyp === 0x03) {
-    const lenBuf = await readExactBytes(socket, 1)
-    await readExactBytes(socket, lenBuf[0] + 2)
+    const lenBuf = await readExactBytes(socket, 1, signal)
+    await readExactBytes(socket, lenBuf[0] + 2, signal)
   } else if (atyp === 0x04) {
-    await readExactBytes(socket, 16 + 2)
+    await readExactBytes(socket, 16 + 2, signal)
   }
 
+  socket.setTimeout(0)
   return socket
 }
 
 /** Establishes a SOCKS4 / SOCKS4a tunnel. */
 async function connectSocks4Tunnel(
-  localAddress: string,
+  localAddress: string | undefined,
   targetHost: string,
   targetPort: number,
-  proxy: ProxyConfig
+  proxy: ProxyConfig,
+  device?: string,
+  signal?: AbortSignal
 ): Promise<Socket> {
-  const socket = connectFrom(localAddress, proxy.host, proxy.port)
+  if (signal?.aborted) throw abortError()
+  const socket = connectFrom(localAddress, proxy.host, proxy.port, device)
 
   await new Promise<void>((resolve, reject) => {
-    socket.once('connect', () => resolve())
-    socket.once('error', reject)
-    socket.setTimeout(PROXY_CONNECT_TIMEOUT_MS, () =>
+    const cleanup = (): void => {
+      socket.off('connect', onConnect)
+      socket.off('error', onError)
+      socket.off('timeout', onTimeout)
+      signal?.removeEventListener('abort', onAbort)
+    }
+    const onConnect = (): void => {
+      cleanup()
+      resolve()
+    }
+    const onError = (err: Error): void => {
+      cleanup()
+      socket.destroy()
+      reject(err)
+    }
+    const onTimeout = (): void => {
+      cleanup()
+      socket.destroy()
       reject(new Error(`Connecting to SOCKS4 proxy ${proxy.host}:${proxy.port} timed out`))
-    )
+    }
+    const onAbort = (): void => {
+      cleanup()
+      socket.destroy()
+      reject(abortError())
+    }
+
+    if (signal?.aborted) {
+      socket.destroy()
+      return reject(abortError())
+    }
+    signal?.addEventListener('abort', onAbort, { once: true })
+
+    socket.once('connect', onConnect)
+    socket.once('error', onError)
+    socket.once('timeout', onTimeout)
+    socket.setTimeout(PROXY_CONNECT_TIMEOUT_MS)
   })
-  socket.setTimeout(0)
+
+  socket.setTimeout(PROXY_CONNECT_TIMEOUT_MS)
 
   const isIpv4 = isIP(targetHost) === 4
   const userId = Buffer.from(proxy.username ?? '', 'utf-8')
@@ -306,7 +502,7 @@ async function connectSocks4Tunnel(
 
   socket.write(requestBuf)
 
-  const response = await readExactBytes(socket, 8)
+  const response = await readExactBytes(socket, 8, signal)
   const status = response[1]
   if (status !== 0x5a) {
     socket.destroy()
@@ -320,33 +516,58 @@ async function connectSocks4Tunnel(
     )
   }
 
+  socket.setTimeout(0)
   return socket
 }
 
 /**
  * Creates an outbound socket connected to `targetHost:targetPort` through the specified `proxy`,
- * bound to the physical network interface owning `localAddress`. If `secure` is true, performs
+ * bound to the physical network interface owning `localAddress` or `device`. If `secure` is true, performs
  * end-to-end TLS handshake with SNI through the established tunnel.
  */
 export async function createProxyConnection(
-  localAddress: string,
+  localAddress: string | undefined,
   targetHost: string,
   targetPort: number,
   secure: boolean,
-  proxy: ProxyConfig
+  proxy: ProxyConfig,
+  device?: string,
+  signal?: AbortSignal
 ): Promise<Socket | TLSSocket> {
+  if (signal?.aborted) throw abortError()
   let tunnelSocket: Socket | TLSSocket
 
   switch (proxy.type) {
     case 'http':
     case 'https':
-      tunnelSocket = await connectHttpTunnel(localAddress, targetHost, targetPort, proxy)
+      tunnelSocket = await connectHttpTunnel(
+        localAddress,
+        targetHost,
+        targetPort,
+        proxy,
+        device,
+        signal
+      )
       break
     case 'socks5':
-      tunnelSocket = await connectSocks5Tunnel(localAddress, targetHost, targetPort, proxy)
+      tunnelSocket = await connectSocks5Tunnel(
+        localAddress,
+        targetHost,
+        targetPort,
+        proxy,
+        device,
+        signal
+      )
       break
     case 'socks4':
-      tunnelSocket = await connectSocks4Tunnel(localAddress, targetHost, targetPort, proxy)
+      tunnelSocket = await connectSocks4Tunnel(
+        localAddress,
+        targetHost,
+        targetPort,
+        proxy,
+        device,
+        signal
+      )
       break
     default:
       throw new Error(`Unsupported proxy type: ${String(proxy.type)}`)
@@ -358,11 +579,37 @@ export async function createProxyConnection(
         socket: tunnelSocket,
         servername: isIP(targetHost) ? undefined : targetHost
       })
-      tls.once('secureConnect', () => resolve(tls))
-      tls.once('error', (err) => {
+      const cleanup = (): void => {
+        tls.off('secureConnect', onSecure)
+        tls.off('error', onError)
+        signal?.removeEventListener('abort', onAbort)
+      }
+      const onSecure = (): void => {
+        cleanup()
+        resolve(tls)
+      }
+      const onError = (err: Error): void => {
+        cleanup()
+        tls.destroy()
         tunnelSocket.destroy()
         reject(err)
-      })
+      }
+      const onAbort = (): void => {
+        cleanup()
+        tls.destroy()
+        tunnelSocket.destroy()
+        reject(abortError())
+      }
+
+      if (signal?.aborted) {
+        tls.destroy()
+        tunnelSocket.destroy()
+        return reject(abortError())
+      }
+      signal?.addEventListener('abort', onAbort, { once: true })
+
+      tls.once('secureConnect', onSecure)
+      tls.once('error', onError)
     })
   }
 

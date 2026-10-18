@@ -99,14 +99,28 @@ function deviceFor(localAddress: string, host: string): string | undefined {
   return undefined
 }
 
-/** A TCP connection to host:port that leaves through the interface owning `localAddress`. */
-export function connectFrom(localAddress: string, host: string, port: number): Socket {
-  const device = libc && deviceFor(localAddress, host)
-  if (!libc || !device) return connect({ host, port, localAddress })
+/** A TCP connection to host:port that leaves through the interface owning `localAddress` or `device`. */
+export function connectFrom(
+  localAddress: string | undefined,
+  host: string,
+  port: number,
+  deviceName?: string
+): Socket {
+  const isLoopback = host === 'localhost' || host.startsWith('127.') || host === '::1'
+  if (isLoopback) {
+    return connect({ host, port })
+  }
 
+  const device = deviceName ?? (libc && localAddress ? deviceFor(localAddress, host) : undefined)
+  if (!libc || !device) {
+    return connect({ host, port, localAddress: localAddress || undefined })
+  }
+
+  const isIpv6 = Boolean(localAddress?.includes(':') || host.includes(':'))
+  const family = isIpv6 ? 6 : 4
   let fd: number
   try {
-    fd = openOnDevice(libc, device, 4)
+    fd = openOnDevice(libc, device, family)
   } catch (error) {
     // The interface vanished since it was listed — surface it like any other connect error.
     const socket = new Socket()
@@ -116,6 +130,7 @@ export function connectFrom(localAddress: string, host: string, port: number): S
   return new Socket({ fd, manualStart: true } as SocketConstructorOpts).connect({
     host,
     port,
-    localAddress
+    localAddress: localAddress || undefined,
+    family
   })
 }
