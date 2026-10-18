@@ -42,8 +42,9 @@
     "koffi": "^2.16.3",
     "lucide-react": "^1.47.0",
     "parse-torrent": "11.0.24",
+    "qrcode": "^1.5.4",
     "react-day-picker": "^10.0.2",
-    "telegram": "^2.26.22",
+    "teleproto": "^1.230.1",
     "webtorrent": "3.0.21",
     "zustand": "^5.0.15"
   },
@@ -55,6 +56,7 @@
     "@tailwindcss/vite": "^4.3.3",
     "@types/chrome": "^0.3.4",
     "@types/node": "^22.19.1",
+    "@types/qrcode": "^1.5.6",
     "@types/react": "^19.2.7",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^5.1.1",

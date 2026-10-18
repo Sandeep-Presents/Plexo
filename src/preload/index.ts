@@ -67,6 +67,7 @@ const plexoApi = {
   telegramState: () => invoke('telegramState'),
   telegramStartLogin: (credentials: TelegramCredentials) =>
     invoke('telegramStartLogin', credentials),
+  telegramStartQrLogin: () => invoke('telegramStartQrLogin'),
   telegramSubmitCode: (code: string) => invoke('telegramSubmitCode', code),
   telegramSubmitPassword: (password: string) => invoke('telegramSubmitPassword', password),
   telegramLogout: () => invoke('telegramLogout'),

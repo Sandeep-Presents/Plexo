@@ -183,9 +183,12 @@ export interface TelegramCredentials {
 }
 
 /** Where Telegram sign-in stands, as the login dialog shows it. Credentials are the user's own
- * api_id/api_hash from my.telegram.org — Plexo ships none. */
+ * api_id/api_hash from my.telegram.org — unless the release build bundles Plexo's own
+ * (`bundled`), in which case the api form becomes an advanced fallback. */
 export interface TelegramAuthState {
   signedIn: boolean
+  /** The release build ships Plexo's own credentials: sign in with a phone (or the QR) alone. */
+  bundled?: boolean
   apiId?: number
   apiHash?: string
   phone?: string
@@ -193,6 +196,9 @@ export interface TelegramAuthState {
   awaitingCode: boolean
   /** The account has two-step verification: the dialog asks for its password. */
   awaitingPassword: boolean
+  /** A QR login is live: `qrDataUrl` holds the current code, which Telegram rotates. */
+  awaitingQr?: boolean
+  qrDataUrl?: string
   /** The signed-in account's name, as Telegram reports it. */
   userName?: string
   error?: string

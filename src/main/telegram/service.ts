@@ -1,12 +1,12 @@
-import { Api, TelegramClient } from 'telegram'
-import { LAYER } from 'telegram/tl/AllTLObjects'
-import { StringSession } from 'telegram/sessions'
-import { sendCode } from 'telegram/client/auth'
-import { computeCheck } from 'telegram/Password'
-import { FloodWaitError, FileMigrateError } from 'telegram/errors'
-import { strippedPhotoToJpg } from 'telegram/Utils'
-import { LogLevel } from 'telegram/extensions/Logger'
-import type { MTProtoSender } from 'telegram/network'
+import { Api, TelegramClient } from 'teleproto'
+import { StringSession } from 'teleproto/sessions'
+import { sendCode, signInUserWithQrCode } from 'teleproto/client/auth'
+import { computeCheck } from 'teleproto/Password'
+import { FloodWaitError, FileMigrateError } from 'teleproto/errors'
+import { strippedPhotoToJpg } from 'teleproto/Utils'
+import { LogLevel } from 'teleproto/extensions/Logger'
+import type { MTProtoSender } from 'teleproto/network'
+import QRCode from 'qrcode'
 import bigInt from 'big-integer'
 import { app, safeStorage } from 'electron'
 import { readFile, rm, writeFile } from 'node:fs/promises'
@@ -36,6 +36,17 @@ const LIST_PAGE = 50
 /** Independent connections a download may open to its file's data center, all under the one
  * login — the shape of a fast download in Telegram's own desktop client. */
 const FILE_SENDER_POOL = 8
+
+/** Plexo's own api credentials, replaced into release builds at build time (see
+ * electron.vite.config.ts). When present, signing in needs only a phone or the QR — the api
+ * form becomes an advanced fallback. */
+const BUNDLED_CREDENTIALS: { apiId: number; apiHash: string } | undefined =
+  typeof __PLEXO_TG_API_ID__ === 'number' &&
+  __PLEXO_TG_API_ID__ > 0 &&
+  typeof __PLEXO_TG_API_HASH__ === 'string' &&
+  __PLEXO_TG_API_HASH__ !== ''
+    ? { apiId: __PLEXO_TG_API_ID__, apiHash: __PLEXO_TG_API_HASH__ }
+    : undefined
 
 interface StoredAuth {
   /** Sealed (safeStorage) or plain JSON of TelegramCredentials. */
@@ -259,10 +270,13 @@ export class TelegramService {
   private client?: TelegramClient
   private credentials?: TelegramCredentials
   private phoneCodeHash?: string
+  /** The live QR sign-in, so switching to the phone flow or signing out can stop its polling. */
+  private qrAbort?: AbortController
   private auth: TelegramAuthState = {
     signedIn: false,
     awaitingCode: false,
-    awaitingPassword: false
+    awaitingPassword: false,
+    bundled: BUNDLED_CREDENTIALS !== undefined
   }
   /** Set by registerIpcHandlers: pushes state changes to the window. */
   onChange: ((state: TelegramAuthState) => void) | undefined
@@ -278,12 +292,17 @@ export class TelegramService {
     const credentials = stored.credentials
       ? (JSON.parse(unseal(stored.credentials) ?? 'null') as TelegramCredentials | null)
       : null
-    if (!credentials?.apiId || !credentials.apiHash) return
+    if (!credentials?.apiId || !credentials.apiHash) {
+      // No credentials of the user's own: a bundled build can still offer the QR.
+      if (BUNDLED_CREDENTIALS) this.onChange?.(this.authState())
+      return
+    }
     this.credentials = credentials
     this.auth = {
       signedIn: false,
       awaitingCode: false,
       awaitingPassword: false,
+      bundled: BUNDLED_CREDENTIALS !== undefined,
       apiId: credentials.apiId,
       apiHash: credentials.apiHash,
       phone: credentials.phone
@@ -324,11 +343,14 @@ export class TelegramService {
     return client
   }
 
-  /** Connects and sends the login code. Keeps any credentials already stored (prefilled). */
-  async startLogin(credentials: TelegramCredentials): Promise<void> {
-    const apiId = Math.floor(Number(credentials.apiId))
-    const apiHash = credentials.apiHash.trim()
-    const phone = credentials.phone.trim()
+  /** Connects and sends the login code. A release build has Plexo's own credentials bundled,
+   * so only the phone is asked for; otherwise the user's api_id/api_hash come in too. Stops
+   * any QR sign-in that was waiting. */
+  async startLogin(input: TelegramCredentials): Promise<void> {
+    this.qrAbort?.abort()
+    const apiId = BUNDLED_CREDENTIALS?.apiId ?? Math.floor(Number(input.apiId))
+    const apiHash = BUNDLED_CREDENTIALS?.apiHash ?? input.apiHash.trim()
+    const phone = input.phone.trim()
     if (!Number.isSafeInteger(apiId) || apiId <= 0)
       throw new Error('Enter the api_id from my.telegram.org.')
     if (!apiHash) throw new Error('Enter the api_hash from my.telegram.org.')
@@ -342,6 +364,7 @@ export class TelegramService {
         signedIn: false,
         awaitingCode: true,
         awaitingPassword: false,
+        bundled: BUNDLED_CREDENTIALS !== undefined,
         apiId,
         apiHash,
         phone
@@ -356,6 +379,91 @@ export class TelegramService {
       }
       this.onChange?.(this.authState())
       throw error
+    }
+  }
+
+  /** Starts a QR sign-in: the dialog is fed fresh login tokens (rendered as a QR that Telegram
+   * rotates) until the user scans one from Settings → Devices. Needs credentials — Plexo's
+   * own when bundled, else the user's from an earlier sign-in. A two-step-verification
+   * account moves the dialog on to its password step after the scan. */
+  async startQrLogin(): Promise<void> {
+    this.qrAbort?.abort()
+    const credentials =
+      this.credentials ?? (BUNDLED_CREDENTIALS ? { ...BUNDLED_CREDENTIALS, phone: '' } : undefined)
+    if (!credentials) {
+      throw new Error(
+        'This build has no Telegram credentials — enter your own api_id/api_hash once and the QR works from the next launch.'
+      )
+    }
+    this.credentials = credentials
+    const abort = new AbortController()
+    this.qrAbort = abort
+    const client = await this.openWithSession('')
+    const pushQr = async (token: Buffer): Promise<void> => {
+      const dataUrl = await QRCode.toDataURL(`tg://login?token=${token.toString('base64url')}`, {
+        margin: 1,
+        width: 232
+      })
+      this.auth = {
+        signedIn: false,
+        awaitingCode: false,
+        awaitingPassword: false,
+        awaitingQr: true,
+        qrDataUrl: dataUrl,
+        bundled: BUNDLED_CREDENTIALS !== undefined,
+        apiId: credentials.apiId,
+        apiHash: credentials.apiHash,
+        error: undefined
+      }
+      this.onChange?.(this.authState())
+    }
+    this.auth = {
+      signedIn: false,
+      awaitingCode: false,
+      awaitingPassword: false,
+      awaitingQr: true,
+      bundled: BUNDLED_CREDENTIALS !== undefined,
+      apiId: credentials.apiId,
+      apiHash: credentials.apiHash
+    }
+    this.onChange?.(this.authState())
+    try {
+      await signInUserWithQrCode(
+        client,
+        { apiId: credentials.apiId, apiHash: credentials.apiHash },
+        {
+          qrCode: async ({ token }) => {
+            await pushQr(token)
+          },
+          onError: (error) => {
+            this.auth = { ...this.auth, error: describeError(error) }
+            this.onChange?.(this.authState())
+          },
+          abortSignal: abort.signal
+        }
+      )
+      if (abort.signal.aborted) return
+      await this.completeSignIn(client)
+    } catch (error) {
+      if (abort.signal.aborted) return
+      if (
+        /SESSION_PASSWORD_NEEDED/.test(
+          (error as { errorMessage?: string } | null)?.errorMessage ?? ''
+        )
+      ) {
+        // The scan went through and the account has two-step verification: the dialog asks
+        // for its password, and CheckPassword finishes the sign-in as in the phone flow.
+        this.auth = {
+          ...this.auth,
+          awaitingQr: false,
+          awaitingPassword: true,
+          error: undefined
+        }
+        this.onChange?.(this.authState())
+        return
+      }
+      this.auth = { ...this.auth, awaitingQr: false, error: describeError(error) }
+      this.onChange?.(this.authState())
     }
   }
 
@@ -418,6 +526,7 @@ export class TelegramService {
       signedIn: true,
       awaitingCode: false,
       awaitingPassword: false,
+      bundled: BUNDLED_CREDENTIALS !== undefined,
       apiId: credentials.apiId,
       apiHash: credentials.apiHash,
       phone: credentials.phone,
@@ -433,6 +542,7 @@ export class TelegramService {
 
   /** Signs out and forgets everything stored. Downloads under way fail with "signed out". */
   async logout(): Promise<void> {
+    this.qrAbort?.abort()
     try {
       await this.client?.invoke(new Api.auth.LogOut())
     } catch {
@@ -445,8 +555,23 @@ export class TelegramService {
     }
     this.client = undefined
     this.phoneCodeHash = undefined
-    this.auth = { signedIn: false, awaitingCode: false, awaitingPassword: false }
-    await rm(STORE_PATH(), { force: true }).catch(() => {})
+    // The api registration isn't the account — the session was. Keeping it lets the next
+    // sign-in lead with the QR instead of the api form.
+    const credentials =
+      this.credentials ?? (BUNDLED_CREDENTIALS ? { ...BUNDLED_CREDENTIALS, phone: '' } : undefined)
+    this.credentials = credentials
+    this.auth = {
+      signedIn: false,
+      awaitingCode: false,
+      awaitingPassword: false,
+      bundled: BUNDLED_CREDENTIALS !== undefined,
+      ...(credentials && { apiId: credentials.apiId, apiHash: credentials.apiHash })
+    }
+    if (credentials) {
+      await saveStore({ credentials: seal(JSON.stringify(credentials)) }).catch(() => {})
+    } else {
+      await rm(STORE_PATH(), { force: true }).catch(() => {})
+    }
     this.onChange?.(this.authState())
   }
 
@@ -683,77 +808,23 @@ export class TelegramService {
     }
   }
 
-  /** One fresh connection to `dcId` under this login: a GramJS exported sender, connected and
-   * authorized explicitly. The client's own connect helper is deliberately not used — it
-   * writes the authorization handshake into a shared init object, so several connections
-   * created at once clobber each other's handshake (AUTH_BYTES_INVALID). Falls back to the
-   * client's shared pooled sender when any of this fails. */
+  /** One fresh connection to `dcId` under this login: a teleproto sender, connected and
+   * authorized by the client's own connect helper — which, unlike GramJS's, serializes its
+   * handshakes per data center and builds each init fresh, so several connections created at
+   * once don't clobber each other. Falls back to the client's shared session sender when any
+   * of this fails. */
   private async createSender(dcId: number): Promise<{ sender: MTProtoSender; owned: boolean }> {
     const client = await this.ready()
     const internals = client as unknown as {
-      _createExportedSender(dcId: number): MTProtoSender
-      _connection: new (options: {
-        ip: string
-        port: number
-        dcId: number
-        loggers: unknown
-        proxy: unknown
-        testServers: unknown
-        socket: unknown
-      }) => Parameters<MTProtoSender['connect']>[0]
-      _proxy: unknown
-      _log: unknown
-      testServers: unknown
-      networkSocket: unknown
-      _initRequest: Api.InvokeWithLayer
+      _makeSender(dcId: number, onBreak: (dcId: number, reason?: unknown) => void): MTProtoSender
+      _connectSender(sender: MTProtoSender, dcId: number): Promise<MTProtoSender>
       getSender(dcId: number): Promise<MTProtoSender>
     }
-    let sender: MTProtoSender | undefined
+    const sender = internals._makeSender(dcId, () => {})
     try {
-      sender = internals._createExportedSender(dcId)
-      // The data center's address; an existing key for it says to ask the -1 test DC list
-      // instead, as the client's own connect helper does.
-      const hasKey = !!sender.authKey?.getKey()
-      const dc = await client.getDC(dcId, hasKey)
-      const connection = new internals._connection({
-        ip: dc.ipAddress,
-        port: dc.port,
-        dcId,
-        loggers: internals._log,
-        proxy: internals._proxy,
-        testServers: internals.testServers,
-        socket: internals.networkSocket
-      })
       // A connection attempt that hangs (an unreachable DC) must not hold the download; the
       // loser of the race is disconnected and the client's shared sender carries on instead.
-      const connecting = (async (): Promise<void> => {
-        await sender!.connect(connection, false)
-        // Another data center needs this login's authorization exported to it — per sender,
-        // with the client's own identity copied in rather than its shared init object.
-        if ((client.session.dcId ?? 0) !== dcId) {
-          const auth = await client.invoke(new Api.auth.ExportAuthorization({ dcId }))
-          const identity =
-            internals._initRequest.query instanceof Api.InitConnection
-              ? internals._initRequest.query
-              : undefined
-          await sender!.send(
-            new Api.InvokeWithLayer({
-              layer: LAYER,
-              query: new Api.InitConnection({
-                apiId: identity?.apiId ?? this.credentials!.apiId,
-                deviceModel: identity?.deviceModel ?? 'Desktop',
-                systemVersion: identity?.systemVersion ?? 'unknown',
-                appVersion: identity?.appVersion ?? 'Plexo',
-                systemLangCode: identity?.systemLangCode ?? 'en',
-                langPack: identity?.langPack ?? '',
-                langCode: identity?.langCode ?? 'en',
-                query: new Api.auth.ImportAuthorization({ id: auth.id, bytes: auth.bytes })
-              })
-            })
-          )
-        }
-        ;(sender as unknown as { dcId: number }).dcId = dcId
-      })()
+      const connecting = internals._connectSender(sender, dcId)
       void connecting.catch(() => {})
       await new Promise<void>((resolve, reject) => {
         const timer = setTimeout(

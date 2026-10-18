@@ -262,6 +262,9 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
   handle('telegramStartLogin', async (_event, credentials) => {
     await telegram.startLogin(credentials)
   })
+  handle('telegramStartQrLogin', async () => {
+    await telegram.startQrLogin()
+  })
   handle('telegramSubmitCode', async (_event, code) => {
     await telegram.submitCode(code)
   })

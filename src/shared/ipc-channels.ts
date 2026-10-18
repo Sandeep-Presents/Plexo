@@ -37,6 +37,7 @@ export const IpcChannels = {
   showUpdateMenu: 'update:show-menu',
   telegramState: 'telegram:state',
   telegramStartLogin: 'telegram:start-login',
+  telegramStartQrLogin: 'telegram:start-qr-login',
   telegramSubmitCode: 'telegram:submit-code',
   telegramSubmitPassword: 'telegram:submit-password',
   telegramLogout: 'telegram:logout',

@@ -73,6 +73,8 @@ export interface IpcContract {
   telegramState: { args: []; result: TelegramAuthState }
   /** Connects with the user's own credentials and sends a login code to `credentials.phone`. */
   telegramStartLogin: { args: [credentials: TelegramCredentials]; result: void }
+  /** Starts a QR sign-in: the dialog gets rotating login tokens to render, until scanned. */
+  telegramStartQrLogin: { args: []; result: void }
   /** Accepts the login code Telegram sent. Stays awaiting when it was wrong. */
   telegramSubmitCode: { args: [code: string]; result: void }
   /** Accepts the two-step-verification password. Stays awaiting when it was wrong. */
