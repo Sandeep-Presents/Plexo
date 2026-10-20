@@ -1,7 +1,7 @@
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { Locator, Page } from '@playwright/test'
-import { BLOCK, expect, interfacesEnv, NETWORKS, test, treeSha } from './fixtures'
+import { BLOCK, expect, interfacesEnv, NETWORKS, shaOfPath, test, treeSha } from './fixtures'
 import { seededBytes } from './origin'
 import { named, Swarm, torrentFileOnDisk } from './torrentSwarm'
 
@@ -230,6 +230,27 @@ test.describe('UI journeys @smoke', () => {
         plexo.evaluateMain(() => (globalThis as Record<string, unknown>).__revealed, null)
       )
       .toEqual([destinationPath])
+  })
+
+  test('paste several links and start them together', async ({ plexo, serve, dirs }) => {
+    const first = await serve({ size: SIZE })
+    const second = await serve({ size: SIZE + BLOCK })
+    await stubNativeUi(plexo, dirs.dest)
+    const page = plexo.page
+
+    const link = await plexo.newDownload()
+    await link.fill(`${first.url()}\n${second.url()}`)
+    await expect(page.getByRole('list', { name: 'Links' }).getByRole('listitem')).toHaveCount(2)
+    const download = page.getByRole('button', { name: 'Download 2' })
+    await expect(download).toBeEnabled({ timeout: 10_000 })
+    await download.click()
+
+    await expect
+      .poll(async () => (await plexo.all()).filter((item) => item.status === 'completed').length)
+      .toBe(2)
+    const completed = (await plexo.all()).filter((item) => item.status === 'completed')
+    expect(await shaOfPath(completed[0].destinationPath)).toBe(first.sha256)
+    expect(await shaOfPath(completed[1].destinationPath)).toBe(second.sha256)
   })
 
   test('delete through the confirmation dialog, then download it again', async ({

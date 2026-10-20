@@ -118,15 +118,22 @@ export function DownloadActionsProvider({
       if (clearAll) {
         await window.plexo.clearHistory()
       } else {
-        for (const item of items) {
-          try {
-            await window.plexo.removeDownload(item.id, { trashFile: mode === 'trash' })
-            useAppStore.getState().forgetDownload(item.id)
-            gone.add(item.id)
-          } catch (cause) {
-            firstFailure ??= cause
+        // Removals are independent. A few at once keeps the list shrinking without waiting for
+        // every manifest and partial file to go one after another (117 of them is noticeable).
+        let next = 0
+        const removeNext = async (): Promise<void> => {
+          while (next < items.length) {
+            const item = items[next++]
+            try {
+              await window.plexo.removeDownload(item.id, { trashFile: mode === 'trash' })
+              useAppStore.getState().forgetDownload(item.id)
+              gone.add(item.id)
+            } catch (cause) {
+              firstFailure ??= cause
+            }
           }
         }
+        await Promise.all(Array.from({ length: Math.min(8, items.length) }, () => removeNext()))
       }
       // Showing one that's gone: back to the list.
       const view = useAppStore.getState().view

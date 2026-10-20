@@ -30,6 +30,8 @@ win:
   target:
     - target: nsis
       arch: [x64, arm64]
+    - target: portable
+      arch: [x64, arm64]
 nsis:
   # No ${arch} on purpose: one installer holds both x64 and ARM64, and docs/downloads.js reads an
   # installer with no architecture in its name as exactly that. Add one here and update it there.
@@ -41,6 +43,9 @@ nsis:
   shortcutName: ${productName}
   uninstallDisplayName: ${productName}
   createDesktopShortcut: always
+portable:
+  # The installer is one file for both architectures, so only the portable builds carry one.
+  artifactName: ${name}-${version}-${arch}-portable.${ext}
 mac:
   # Only the zips go by this name: the dmg has its own (dmg.artifactName).
   artifactName: ${name}-${version}-${arch}-mac.${ext}
@@ -91,5 +96,5 @@ npmRebuild: false
 # workflow uploads them, with the latest*.yml files the updater reads.
 publish:
   provider: github
-  owner: anmolkapil
-  repo: plexo
+  owner: m7kor
+  repo: 67download

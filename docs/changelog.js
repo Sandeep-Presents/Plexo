@@ -10,6 +10,31 @@
 
   root.PlexoChangelog = [
     {
+      version: 'v1.0.0-rc.16',
+      items: [
+        {
+          kind: 'new',
+          title: 'Several links at once',
+          text: 'Paste or drop one link per line, check them all, and start them together. They share the folder, networks and stream settings.'
+        },
+        {
+          kind: 'improved',
+          title: 'Faster bulk removal',
+          text: 'Removing a large selection works through it a few downloads at a time instead of waiting for each one in turn.'
+        },
+        {
+          kind: 'fixed',
+          title: 'Hosts that report the file end',
+          text: 'Some hosts send the end of the file in `Content-Range` while the body is only the requested range. Plexo now keeps its parallel streams on those downloads.'
+        },
+        {
+          kind: 'new',
+          title: 'Portable Windows build',
+          text: 'Download the portable `.exe` to run Plexo without installing it, alongside the installer for x64 and ARM64 PCs.'
+        }
+      ]
+    },
+    {
       version: 'v1.0.0-rc.15',
       items: [
         {
