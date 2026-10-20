@@ -1540,12 +1540,19 @@ export class DownloadManager {
     }
     if (
       runtime &&
+      !runtime.publishing &&
       (runtime.state.status === 'downloading' ||
         runtime.state.status === 'paused' ||
         runtime.state.status === 'queued' ||
         runtime.state.status === 'error')
     ) {
       await this.cancel(id)
+      // Cancelling already discarded the partial file and its manifest directory. Removing
+      // those a second time is only more disk work, which adds up over a whole selection.
+      if (runtime.removed) {
+        this.runtimes.delete(id)
+        return
+      }
     }
     if (runtime) {
       if (trashFile && runtime.state.status === 'completed') {
