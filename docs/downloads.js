@@ -52,6 +52,16 @@
       return mk('mac', arch, 'dmg', 'macOS', '.dmg', 2)
     }
     if (/\.exe$/.test(n)) {
+      // Portable builds don't install: one file per architecture, run it where it sits.
+      if (/portable/.test(n)) {
+        if (arch === 'arm64') {
+          return mk('win', arch, 'portable', 'Portable · ARM64', 'No install needed', 4)
+        }
+        if (arch === 'x64') {
+          return mk('win', arch, 'portable', 'Portable · x64', 'No install needed', 3)
+        }
+        return mk('win', arch, 'portable', 'Portable', 'No install needed', 4)
+      }
       // Our installer carries no architecture in its name because one file holds both.
       if (arch === 'any') {
         return mk('win', arch, 'exe', 'Windows 10 and 11', 'Installer · x64 and ARM64', 0)
@@ -186,7 +196,14 @@
       }
       if (!env.arch) hint = 'Not sure which? Apple menu → About This Mac.'
     } else if (env.os === 'win') {
-      primary = byArch(mine, env.arch || 'any') || byArch(mine, 'any') || mine[0]
+      var installers = mine.filter(function (a) {
+        return a.kind === 'exe'
+      })
+      primary =
+        byArch(installers, env.arch || 'any') ||
+        byArch(installers, 'any') ||
+        installers[0] ||
+        mine[0]
       mine.forEach(function (a) {
         if (a !== primary) alternates.push({ text: 'Get ' + a.title, asset: a })
       })
