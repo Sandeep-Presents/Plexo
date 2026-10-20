@@ -19,6 +19,9 @@ const MAX_REDIRECTS = 5
 // redirects included, so a chain of slow hops can't stretch it.
 const PROBE_TIMEOUT_MS = testKnobs.stallTimeoutMs
 const NO_RESPONSE = 'The server did not respond — check the link and try again'
+/** The last byte the probe asks for. Not 0 or 1: some file hosts answer a range that ends there
+ * with the whole file while serving every real chunk as asked (#101). */
+const PROBE_RANGE_END = 1023
 
 type Headers = Record<string, string | string[] | undefined>
 
@@ -33,9 +36,8 @@ interface ProbeResponse {
 }
 
 /** GET with a small range: cheaper than fetching the body, and unlike HEAD it also tells us (via
- * the 206 status) whether range requests actually work. Not 1 byte: some file hosts answer a range
- * that ends at byte 0 or 1 with the whole file, while serving every real chunk as asked (#101).
- * `ranged: false` sends a plain GET instead; the body is still dropped once the headers arrive. */
+ * the 206 status) whether range requests actually work. `ranged: false` sends a plain GET instead;
+ * the body is still dropped once the headers arrive. */
 function requestFirstBytes(
   url: URL,
   deadline: number,
@@ -51,7 +53,7 @@ function requestFirstBytes(
         port: url.port || undefined,
         path: `${url.pathname}${url.search}`,
         headers: ranged
-          ? { ...requestHeaders(url, browser), Range: 'bytes=0-1023' }
+          ? { ...requestHeaders(url, browser), Range: `bytes=0-${PROBE_RANGE_END}` }
           : requestHeaders(url, browser)
       },
       (res) => {
@@ -175,7 +177,18 @@ export async function probeUrl(rawUrl: string, browser?: BrowserContext): Promis
   // A server that supports range requests must answer our range GET with 206 Partial Content.
   // If it returned 200 OK, it ignored the Range header and sent the whole file — even if its headers
   // statically claim `Accept-Ranges: bytes`.
-  const supportsRanges = response.statusCode === 206
+  //
+  // A 206 is only a promise if it sends us the bytes we asked for. Most say so in Content-Range,
+  // but some hosts (Cloudflare-fronted file hosts among them) put the end of the *file* there
+  // while setting Content-Length to the range they actually send. Trust whichever says the body
+  // is bounded, so those keep their parallel streams instead of falling back to one.
+  const served = /^bytes\s+(\d+)-(\d+)\//i.exec(contentRange ?? '')
+  const contentLength = Number(headerValue(response.headers, 'content-length') ?? NaN)
+  const servesOnlyProbe =
+    served !== null &&
+    Number(served[1]) === 0 &&
+    (Number(served[2]) <= PROBE_RANGE_END || contentLength === PROBE_RANGE_END + 1)
+  const supportsRanges = response.statusCode === 206 && servesOnlyProbe
 
   let totalBytes: number | null = null
   if (contentRange) {
