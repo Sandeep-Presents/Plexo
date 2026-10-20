@@ -63,6 +63,7 @@ https://github.com/user-attachments/assets/e57728f4-fb63-441f-839c-174eef954b17
 ### Download management
 
 - Download direct links, magnet links and `.torrent` files
+- Paste several links at once and start them together
 - Select torrent files before or during a download
 - Pause and resume supported downloads across restarts
 - Automatically reconnect downloads after sleep

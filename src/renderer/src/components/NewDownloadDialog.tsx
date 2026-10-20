@@ -1,4 +1,4 @@
-import type { ProbeResult } from '@shared/types'
+import type { ProbeResult, StartDownloadRequest } from '@shared/types'
 import { cn } from 'cn'
 import { AlertTriangle, ChevronLeft, ChevronRight, FolderOpen, Globe, Lock, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
@@ -9,10 +9,12 @@ import { useDownloadSchedule } from '../hooks/useDownloadSchedule'
 import { useAppStore } from '../store/useAppStore'
 import {
   acceptedLink,
+  acceptedLinks,
   describeError,
   describeFileCount,
   fileExtensionBadge,
   formatBytes,
+  sourceOf,
   toDisplayPath
 } from '../utils/format'
 import { Button } from './ui/button'
@@ -28,6 +30,27 @@ type ProbeState =
   | { status: 'error'; message: string }
 
 const PROBE_DEBOUNCE_MS = 600
+/** Links checked at once; many links pasted together don't all open a connection at the same time. */
+const PROBE_CONCURRENCY = 4
+
+interface LinkEntry {
+  url: string
+  accepted: boolean
+}
+
+/** One link per line, so a batch starts from what the user pasted. */
+function linkEntries(text: string): LinkEntry[] {
+  return text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((url) => ({ url, accepted: acceptedLink(url) !== null }))
+}
+
+/** A link can be split across connections and has a size to divide. */
+function splittable(result: ProbeResult): boolean {
+  return result.supportsRanges && result.totalBytes !== null
+}
 
 type StreamsChoice = 'auto' | number
 /** Streams per network the user can pick instead of Auto. */
@@ -35,9 +58,9 @@ const STREAMS_CHOICES: StreamsChoice[] = ['auto', 4, 8, 16, 32]
 
 const labelClass = 'w-16 shrink-0 text-[12.5px] text-[var(--text-secondary)]'
 
-/** New download: a link, then only what differs from one download to the next — its name (or a
- * torrent's files), where it goes, over which networks, and how many streams each runs. Everything set once for every
- * download lives in Speed & data limits and the networks menu. */
+/** New download: one or more links, then only what differs from one download to the next — its
+ * name (or a torrent's files), where it goes, over which networks, and how many streams each runs.
+ * Everything set once for every download lives in Speed & data limits and the networks menu. */
 export function NewDownloadDialog(): React.JSX.Element {
   const open = useAppStore((store) => store.newDownloadOpen)
   const close = useAppStore((store) => store.closeNewDownload)
@@ -83,9 +106,12 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
   const setNetworkPreference = useAppStore((store) => store.setNetworkPreference)
   const usage = useNetworkUsage(true)
   const formatSpeedLimit = useFormatSpeedLimit()
-  const linkInput = useRef<HTMLInputElement>(null)
+  const linkInput = useRef<HTMLTextAreaElement>(null)
 
-  const [probe, setProbe] = useState<ProbeState>({ status: 'idle' })
+  const [probes, setProbes] = useState<Record<string, ProbeState>>({})
+  // Kept current for the probing effect, which must not re-run whenever a probe changes.
+  const probesRef = useRef(probes)
+  probesRef.current = probes
   // Tracks deselections rather than selections, so a newly-detected interface starts selected.
   // Starts from the last download's pick: the networks it left out are saved as `off`.
   const [deselectedInterfaceIds, setDeselectedInterfaceIds] = useState<string[]>(() =>
@@ -108,9 +134,10 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
     void window.plexo
       .readClipboardText()
       .then((text) => {
-        const link = acceptedLink(text)
+        const links = acceptedLinks(text)
         const { draftUrl, startedUrl } = useAppStore.getState()
-        if (link && link !== startedUrl && !draftUrl) setUrl(link)
+        const draft = links.join('\n')
+        if (draft && draft !== startedUrl && !draftUrl) setUrl(draft)
       })
       .catch(() => {})
   }, [setUrl])
@@ -119,8 +146,7 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
     const trimmed = url.trim()
     if (!trimmed) {
       // Resetting derived probe state when its trigger (the URL) is cleared.
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setProbe({ status: 'idle' })
+      setProbes({})
       setFileNameOverride(null)
       setSkippedFiles([])
       return
@@ -132,24 +158,49 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
     if (given && given.url !== trimmed) dropLink(given.id, false)
     setFileNameOverride(null)
     setSkippedFiles([])
-    if (given?.url === trimmed && given.probe) {
-      setProbe({ status: 'ready', result: given.probe })
+    const entries = linkEntries(trimmed)
+    if (given?.url === trimmed && given.probe && entries.length === 1) {
+      setProbes({ ...probesRef.current, [trimmed]: { status: 'ready', result: given.probe } })
       return
     }
 
-    // Set once the link changes, cleared included: a magnet can take a while to answer, and its
+    const current = probesRef.current
+    const missing = entries.filter(
+      (entry) =>
+        entry.accepted &&
+        (current[entry.url] === undefined || current[entry.url].status === 'probing')
+    )
+    if (missing.length === 0) return
+
+    // Set once the links change, cleared included: a magnet can take a while to answer, and its
     // answer is no longer wanted then.
     let stale = false
-    setProbe({ status: 'probing' })
+    setProbes((previous) => {
+      const next = { ...previous }
+      for (const entry of missing) next[entry.url] = { status: 'probing' }
+      return next
+    })
     const timer = setTimeout(async () => {
-      try {
-        const result = await window.plexo.probeUrl(trimmed)
-        if (stale) return
-        setProbe({ status: 'ready', result })
-      } catch (error) {
-        if (stale) return
-        setProbe({ status: 'error', message: describeError(error) })
+      const queue = missing.map((entry) => entry.url)
+      const probeNext = async (): Promise<void> => {
+        while (queue.length > 0 && !stale) {
+          const url = queue.shift()!
+          try {
+            const result = await window.plexo.probeUrl(url)
+            if (stale) return
+            setProbes((previous) => ({ ...previous, [url]: { status: 'ready', result } }))
+          } catch (error) {
+            if (stale) return
+            setProbes((previous) => ({
+              ...previous,
+              [url]: { status: 'error', message: describeError(error) }
+            }))
+          }
+        }
       }
+      await Promise.all(
+        Array.from({ length: Math.min(PROBE_CONCURRENCY, queue.length) }, () => probeNext())
+      )
     }, PROBE_DEBOUNCE_MS)
 
     return () => {
@@ -158,6 +209,17 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
     }
   }, [url, dropLink])
 
+  const entries = linkEntries(url)
+  const many = entries.length > 1
+  const entryViews = entries.map((entry) => ({
+    ...entry,
+    probe: entry.accepted
+      ? (probes[entry.url] ?? { status: 'idle' as const })
+      : ({ status: 'error', message: 'Not a link Plexo can download.' } as const)
+  }))
+  // The full form for one link: its name, a torrent's files, and streams.
+  const single = entries.length === 1 ? entryViews[0] : null
+  const probe: ProbeState = single?.probe ?? { status: 'idle' }
   const ready = probe.status === 'ready' ? probe.result : null
   const torrent = ready?.kind === 'torrent' ? ready.torrent : null
   const chosenFiles = torrent
@@ -167,7 +229,7 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
   const sizeToFetch = torrent
     ? chosenFiles.reduce((sum, index) => sum + torrent.files[index].length, 0)
     : (ready?.totalBytes ?? null)
-  const multiChunkAllowed = ready !== null && ready.supportsRanges && ready.totalBytes !== null
+  const multiChunkAllowed = ready !== null && splittable(ready)
   const isSingleStreamOnly = ready !== null && !multiChunkAllowed
 
   const detectedIds = interfaces.map((iface) => iface.id)
@@ -190,21 +252,35 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
         )
       : []
 
+  // Every link has to be checked before the batch starts: one still being looked at would be
+  // silently left out.
+  const allReady =
+    entryViews.length > 0 && entryViews.every((view) => view.probe.status === 'ready')
   const canStart =
-    probe.status === 'ready' &&
+    allReady &&
     (!torrent || chosenFiles.length > 0) &&
     selectedInterfaceIds.length > 0 &&
     Boolean(destinationDir) &&
     !starting
   const startLabel = starting
     ? 'Starting'
-    : probe.status === 'probing'
+    : entryViews.some((view) => view.probe.status === 'probing')
       ? 'Checking'
       : scheduledWait
         ? 'Add to scheduled queue'
         : full
           ? 'Add to queue'
-          : 'Download'
+          : many
+            ? `Download ${entryViews.length}`
+            : 'Download'
+  const showStreams =
+    (ready !== null && !torrent && !isSingleStreamOnly) ||
+    entryViews.some(
+      (view) =>
+        view.probe.status === 'ready' &&
+        view.probe.result.kind === 'http' &&
+        splittable(view.probe.result)
+    )
 
   // Two networks on one subnet: the OS sends both down one route, so there's nothing to combine.
   let subnetConflict: { subnet: string; names: string[] } | null = null
@@ -247,10 +323,17 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
     if (chosen) setDestinationDir(chosen)
   }
 
-  // A .torrent file goes in the link field as its path; the probe reads it from there.
+  // A .torrent file goes in the link field as its path; the probe reads it from there. With links
+  // already in it, it joins them as another one.
   const handleOpenTorrent = async (): Promise<void> => {
     const path = await window.plexo.chooseTorrentFile()
-    if (path) setUrl(path)
+    if (!path) return
+    setUrl(shownLink || !url.trim() ? path : `${url.trimEnd()}\n${path}`)
+  }
+
+  const removeEntry = (index: number): void => {
+    setStartError(null)
+    setUrl(entryViews.flatMap((entry, at) => (at === index ? [] : [entry.url])).join('\n'))
   }
 
   const handleResume = async (): Promise<void> => {
@@ -269,39 +352,55 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
     }
   }
 
+  const requestFor = (result: ProbeResult): StartDownloadRequest => {
+    const common = {
+      url: result.finalUrl,
+      destinationDir,
+      suggestedFileName: single
+        ? fileNameOverride?.trim() || result.suggestedFileName
+        : result.suggestedFileName,
+      totalBytes: result.totalBytes ?? 0,
+      supportsRanges: splittable(result),
+      // A file that can't be split runs on one network: the first one picked.
+      interfaceIds:
+        result.kind === 'http' && !splittable(result)
+          ? selectedInterfaceIds.slice(0, 1)
+          : selectedInterfaceIds,
+      etag: result.etag,
+      lastModified: result.lastModified
+    }
+    return result.kind === 'torrent'
+      ? {
+          ...common,
+          kind: 'torrent',
+          infoHash: result.torrent.infoHash,
+          selectedFiles: single && skippedFiles.length > 0 ? chosenFiles : undefined
+        }
+      : {
+          ...common,
+          kind: 'http',
+          streamsPerNetwork: streamsChoice === 'auto' ? undefined : streamsChoice
+        }
+  }
+
   const handleStart = async (): Promise<void> => {
-    if (probe.status !== 'ready' || !canStart) return
+    if (!canStart) return
     // Captured now: links can arrive and change what's shown while this starts.
-    const linkId = shownLink?.id
+    const linkId = many ? undefined : shownLink?.id
     const form = useAppStore.getState().formKey
+    const started: string[] = []
+    const failures: { url: string; message: string }[] = []
     setStarting(true)
     setStartError(null)
     try {
-      const common = {
-        url: probe.result.finalUrl,
-        destinationDir,
-        suggestedFileName: fileNameOverride?.trim() || probe.result.suggestedFileName,
-        totalBytes: probe.result.totalBytes ?? 0,
-        supportsRanges: multiChunkAllowed,
-        interfaceIds: selectedInterfaceIds,
-        etag: probe.result.etag,
-        lastModified: probe.result.lastModified
+      for (const view of entryViews) {
+        if (view.probe.status !== 'ready') continue
+        try {
+          started.push(await window.plexo.startDownload(requestFor(view.probe.result), linkId))
+        } catch (error) {
+          failures.push({ url: view.url, message: describeError(error) })
+        }
       }
-      const id = await window.plexo.startDownload(
-        probe.result.kind === 'torrent'
-          ? {
-              ...common,
-              kind: 'torrent',
-              infoHash: probe.result.torrent.infoHash,
-              selectedFiles: skippedFiles.length > 0 ? chosenFiles : undefined
-            }
-          : {
-              ...common,
-              kind: 'http',
-              streamsPerNetwork: streamsChoice === 'auto' ? undefined : streamsChoice
-            },
-        linkId
-      )
       // Remembered for the next download, like the folder. Not a single-stream pick: that's one
       // network because the file allows no more, not because the others were unwanted.
       if (!isSingleStreamOnly) {
@@ -312,11 +411,29 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
           }
         }
       }
-      // Started: the link is spent, so the next download starts from an empty one. Its own
-      // screen opens, unless it was only added to the queue.
+      // What was started is still on the clipboard: not offered again on the next opening.
       useAppStore.setState({
-        startedUrl: url.trim(),
-        ...(full || scheduledWait ? {} : { view: { name: 'download', id } as const })
+        startedUrl: entryViews.map((entry) => entry.url).join('\n')
+      })
+
+      if (failures.length > 0) {
+        setStartError(
+          failures.length === entryViews.length
+            ? `Couldn’t start: ${failures[0].message}`
+            : `${failures.length} of ${entryViews.length} couldn’t start: ${failures[0].message}`
+        )
+        // Only the ones to try again stay: the rest are under way.
+        setUrl(failures.map((failure) => failure.url).join('\n'))
+        setStarting(false)
+        return
+      }
+
+      // Started: the link is spent, so the next download starts from an empty one. Its own
+      // screen opens for one, unless it was only added to the queue; a batch leaves the list.
+      useAppStore.setState({
+        ...(!many && !full && !scheduledWait && started[0]
+          ? { view: { name: 'download', id: started[0] } as const }
+          : {})
       })
       if (linkId) {
         finishLink(linkId, true)
@@ -342,7 +459,9 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
       }}
     >
       <div className="flex items-center gap-2 border-b-[0.5px] border-border py-3 pr-3 pl-5">
-        <DialogTitle className="flex-1 py-1 text-[16px] font-semibold">New download</DialogTitle>
+        <DialogTitle className="flex-1 py-1 text-[16px] font-semibold">
+          {many ? 'New downloads' : 'New download'}
+        </DialogTitle>
         {shownLink && links.length > 1 && (
           <div className="flex items-center gap-1">
             <Button
@@ -376,20 +495,34 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
         <div className="flex items-center gap-2">
           <div
             className={cn(
-              'flex h-9 min-w-0 flex-1 items-center gap-2 rounded-[9px] border bg-[var(--input-bg)] px-3',
-              probe.status === 'error' ? 'border-destructive' : 'border-input'
+              'flex min-h-9 min-w-0 flex-1 items-center gap-2 rounded-[9px] border bg-[var(--input-bg)] px-3 py-1',
+              entryViews.some((view) => view.probe.status === 'error')
+                ? 'border-destructive'
+                : 'border-input'
             )}
           >
-            <input
+            <textarea
               ref={linkInput}
               autoFocus
-              type="text"
+              rows={Math.min(6, Math.max(1, entries.length))}
               value={url}
-              onChange={(event) => setUrl(event.target.value)}
-              placeholder="Paste a link: https:// or magnet:"
+              onChange={(event) => {
+                setStartError(null)
+                setUrl(event.target.value)
+              }}
+              onKeyDown={(event) => {
+                // Enter still starts one link, as it always has; Shift+Enter adds a line. With
+                // several, Enter is a line break and Ctrl/Cmd+Enter starts them.
+                const command = event.metaKey || event.ctrlKey
+                if (event.key === 'Enter' && !event.shiftKey && (command || entries.length <= 1)) {
+                  event.preventDefault()
+                  void handleStart()
+                }
+              }}
+              placeholder="Paste links, one per line: https:// or magnet:"
               spellCheck={false}
               aria-label="Link"
-              className="min-w-0 flex-1 border-none bg-transparent font-mono text-[13px] text-foreground outline-none"
+              className="min-w-0 flex-1 resize-none border-none bg-transparent py-1 font-mono text-[13px] leading-[1.5] text-foreground outline-none"
             />
             {url && (
               <Tooltip>
@@ -449,6 +582,68 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
             >
               Resume it
             </Button>
+          </div>
+        )}
+
+        {many && (
+          <div role="list" aria-label="Links" className="flex flex-col gap-1">
+            {entryViews.map((entry, index) => {
+              const result = entry.probe.status === 'ready' ? entry.probe.result : null
+              const name = result?.suggestedFileName ?? sourceOf(entry.url)
+              const detail =
+                entry.probe.status === 'probing'
+                  ? 'Checking…'
+                  : entry.probe.status === 'error'
+                    ? entry.probe.message
+                    : result
+                      ? [
+                          result.kind === 'torrent' &&
+                            `${describeFileCount(result.torrent.files.length, result.torrent.files.length)} (all)`,
+                          result.totalBytes !== null
+                            ? formatBytes(result.totalBytes)
+                            : 'size unknown',
+                          result.kind === 'http' && !splittable(result) ? 'one connection' : null
+                        ]
+                          .filter(Boolean)
+                          .join(' · ')
+                      : 'Waiting to be checked'
+              return (
+                <div
+                  role="listitem"
+                  key={`${index}-${entry.url}`}
+                  className="flex items-center gap-2 rounded-[9px] border-[0.5px] border-border bg-card px-2.5 py-1.5"
+                >
+                  <div className="flex size-7 shrink-0 items-center justify-center rounded-md border-[0.5px] border-border bg-background font-mono text-[9px] font-semibold text-muted-foreground">
+                    {result?.kind === 'torrent'
+                      ? 'TOR'
+                      : result
+                        ? fileExtensionBadge(result.suggestedFileName)
+                        : '…'}
+                  </div>
+                  <div className="flex min-w-0 flex-1 flex-col">
+                    <div className="truncate text-[12.5px] font-medium">{name}</div>
+                    <div
+                      className={cn(
+                        'truncate font-mono text-[11px]',
+                        entry.probe.status === 'error'
+                          ? 'text-[var(--color-danger)]'
+                          : 'text-muted-foreground'
+                      )}
+                    >
+                      {detail}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    aria-label={`Remove ${name}`}
+                    onClick={() => removeEntry(index)}
+                    className="flex size-5 shrink-0 cursor-default items-center justify-center rounded-full text-muted-foreground hover:bg-secondary hover:text-foreground"
+                  >
+                    <X aria-hidden className="size-3.5" />
+                  </button>
+                </div>
+              )
+            })}
           </div>
         )}
 
@@ -572,7 +767,7 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
         </div>
 
         {/* A torrent's speed comes from its peers, and an unsplittable file has one stream. */}
-        {ready && !torrent && !isSingleStreamOnly && (
+        {showStreams && (
           <div className="flex items-center gap-3">
             <div className={labelClass} id="new-download-streams">
               Streams
@@ -628,6 +823,17 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
             This download uses one connection on one network.
           </div>
         )}
+        {many &&
+          entryViews.some(
+            (view) =>
+              view.probe.status === 'ready' &&
+              view.probe.result.kind === 'http' &&
+              !splittable(view.probe.result)
+          ) && (
+            <div className="text-[12px] text-muted-foreground">
+              Links that can’t be split use one connection each.
+            </div>
+          )}
       </div>
 
       <div className="flex items-center gap-2 border-t-[0.5px] border-border px-4 py-2">

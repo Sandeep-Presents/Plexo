@@ -188,6 +188,17 @@ export function acceptedLink(text: string): string | null {
   return null
 }
 
+/** A clipboard or drop of one or more links, one per line; empty unless every non-blank line is
+ * a link Plexo can take, so prose or a partly mixed selection is left alone. */
+export function acceptedLinks(text: string): string[] {
+  const lines = text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+  const links = lines.map(acceptedLink)
+  return links.every((link): link is string => link !== null) ? links : []
+}
+
 /** Where a link's download comes from, in a word: its host. */
 export function sourceOf(url: string): string {
   try {

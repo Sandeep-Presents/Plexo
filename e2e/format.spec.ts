@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test'
 import {
+  acceptedLinks,
   formatBytes,
   formatEta,
   formatPercent,
@@ -11,6 +12,16 @@ const GiB = 1024 ** 3
 const MiB = 1024 ** 2
 
 test.describe('formatting @smoke', () => {
+  test('a pasted list is taken only when every line is a link', () => {
+    expect(acceptedLinks('https://example.test/a\nmagnet:?xt=urn:btih:abc')).toEqual([
+      'https://example.test/a',
+      'magnet:?xt=urn:btih:abc'
+    ])
+    expect(acceptedLinks('  https://example.test/a  \n\n')).toEqual(['https://example.test/a'])
+    expect(acceptedLinks('https://example.test/a\nnot a link')).toEqual([])
+    expect(acceptedLinks('')).toEqual([])
+  })
+
   test('a percentage reads 100 only once every byte is in', () => {
     expect(formatPercent(10 * GiB - 5 * MiB, 10 * GiB)).toBe(99)
     expect(formatPercent(999, 1000)).toBe(99)
