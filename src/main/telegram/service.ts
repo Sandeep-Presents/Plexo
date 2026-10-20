@@ -1,11 +1,12 @@
-import { Api, TelegramClient } from 'teleproto'
-import { StringSession } from 'teleproto/sessions'
-import { sendCode, signInUserWithQrCode } from 'teleproto/client/auth'
-import { computeCheck } from 'teleproto/Password'
-import { FloodWaitError, FileMigrateError } from 'teleproto/errors'
-import { strippedPhotoToJpg } from 'teleproto/Utils'
-import { LogLevel } from 'teleproto/extensions/Logger'
-import type { MTProtoSender } from 'teleproto/network'
+import { Api, TelegramClient } from 'telegram'
+import { LAYER } from 'telegram/tl/AllTLObjects'
+import { StringSession } from 'telegram/sessions'
+import { sendCode, signInUserWithQrCode } from 'telegram/client/auth'
+import { computeCheck } from 'telegram/Password'
+import { FloodWaitError, FileMigrateError } from 'telegram/errors'
+import { strippedPhotoToJpg } from 'telegram/Utils'
+import { LogLevel } from 'telegram/extensions/Logger'
+import type { MTProtoSender } from 'telegram/network'
 import QRCode from 'qrcode'
 import bigInt from 'big-integer'
 import { app, safeStorage } from 'electron'
@@ -266,6 +267,14 @@ function asFileError(error: unknown): TelegramFileError {
 const isFileReferenceError = (error: unknown): boolean =>
   /FILE_REFERENCE/.test((error as { errorMessage?: string } | null)?.errorMessage ?? '')
 
+/** Telegram rejected the login itself — a revoked, expired or killed session. Sign-in is
+ * genuinely required again; the app's job is to say so cleanly and keep the api registration. */
+const isAuthLossError = (error: unknown): boolean =>
+  /AUTH_KEY_UNREGISTERED|AUTH_KEY_DUPLICATED|SESSION_REVOKED|USER_DEACTIVATED|SESSION_EXPIRED|AUTH_KEY_PERM_EMPTY/.test(
+    (error as { errorMessage?: string; message?: string } | null)?.errorMessage ??
+      describeError(error)
+  )
+
 export class TelegramService {
   private client?: TelegramClient
   private credentials?: TelegramCredentials
@@ -328,6 +337,7 @@ export class TelegramService {
 
   private async openWithSession(session: string): Promise<TelegramClient> {
     if (!this.credentials) throw new Error('Telegram credentials are missing.')
+    console.error('[plexo-tg] client.connect…')
     const client = new TelegramClient(
       new StringSession(session),
       this.credentials.apiId,
@@ -339,6 +349,7 @@ export class TelegramService {
     )
     client.setLogLevel(LogLevel.ERROR)
     await client.connect()
+    console.error('[plexo-tg] client connected')
     this.client = client
     return client
   }
@@ -357,8 +368,11 @@ export class TelegramService {
     if (!phone) throw new Error('Enter your phone number.')
     this.credentials = { apiId, apiHash, phone }
     try {
+      console.error('[plexo-tg] startLogin: connecting with api_id', apiId, 'phone', phone)
       const client = await this.openWithSession('')
+      console.error('[plexo-tg] startLogin: connected; sending code…')
       const { phoneCodeHash } = await sendCode(client, { apiId, apiHash }, phone)
+      console.error('[plexo-tg] startLogin: code sent')
       this.phoneCodeHash = phoneCodeHash
       this.auth = {
         signedIn: false,
@@ -433,13 +447,15 @@ export class TelegramService {
         { apiId: credentials.apiId, apiHash: credentials.apiHash },
         {
           qrCode: async ({ token }) => {
+            // GramJS's QR params carry no abort hook: cancelling throws from inside the
+            // callback instead, which ends the helper's polling loop.
+            if (abort.signal.aborted) throw new Error('QR sign-in cancelled')
             await pushQr(token)
           },
           onError: (error) => {
             this.auth = { ...this.auth, error: describeError(error) }
             this.onChange?.(this.authState())
-          },
-          abortSignal: abort.signal
+          }
         }
       )
       if (abort.signal.aborted) return
@@ -590,10 +606,19 @@ export class TelegramService {
   async listMediaPage(offsetId?: number, limit?: number): Promise<TelegramMediaPage> {
     const client = await this.ready()
     const count = Math.min(Math.max(limit ?? LIST_PAGE, 1), 100)
-    const messages = await client.getMessages('me', {
-      limit: count,
-      ...(offsetId !== undefined ? { offsetId } : {})
-    })
+    let messages
+    try {
+      messages = await client.getMessages('me', {
+        limit: count,
+        ...(offsetId !== undefined ? { offsetId } : {})
+      })
+    } catch (error) {
+      if (isAuthLossError(error)) {
+        await this.authLoss()
+        throw new TelegramFileError('auth', 'This Telegram session signed out. Sign in again.')
+      }
+      throw error
+    }
     const items: TelegramMediaItem[] = []
     for (const message of messages) {
       if (!message.media) continue
@@ -686,10 +711,14 @@ export class TelegramService {
    * (on the first request), and refetched when Telegram says its reference went stale — which
    * it does within a day, so a paused download's resume rebuilds it rather than failing.
    *
-   * Chunks rotate across a small pool of independent connections to the file's data center,
-   * all under this one login — the shape of a fast download in Telegram's own desktop client.
-   * The connections this source opened are closed when the download is done with it. */
+   * Chunks go through teleproto's media scheduler, which owns the download sessions: it
+   * spreads requests across several properly-registered connections per data center (hand
+   * rolled senders trip Telegram's duplicate-session protection and get the login killed),
+   * retries on its own, follows data-center migrations, and speaks CDN when the file lives
+   * there. */
   async fileSource(messageId: number): Promise<TelegramFileSource> {
+    // The returned source object's methods call back into the service through this.
+    const authLoss = (): Promise<void> => this.authLoss()
     const client = await this.ready()
     let located: LocatedMedia | null = null
     const locateNow = async (): Promise<LocatedMedia> => {
@@ -796,6 +825,13 @@ export class TelegramService {
             located = await locateNow()
             return await requestChunk(offset, limit, guard)
           }
+          if (isAuthLossError(error)) {
+            // Telegram rejected the login itself. The dialog goes back to sign-in — the stored
+            // session is dead server-side either way, so it's cleared rather than reconnected
+            // (and failing) at every launch.
+            await authLoss()
+            throw new TelegramFileError('auth', 'This Telegram session signed out. Sign in again.')
+          }
           if (error instanceof FileMigrateError) {
             // The connections target the wrong DC now: drop them and follow the file.
             await disposePool()
@@ -808,23 +844,109 @@ export class TelegramService {
     }
   }
 
-  /** One fresh connection to `dcId` under this login: a teleproto sender, connected and
-   * authorized by the client's own connect helper — which, unlike GramJS's, serializes its
-   * handshakes per data center and builds each init fresh, so several connections created at
-   * once don't clobber each other. Falls back to the client's shared session sender when any
-   * of this fails. */
+  /** Telegram rejected the login itself (a revoked or expired session, or a killed key): the
+   * dialog goes back to sign-in, the api registration stays so the QR still leads, and the
+   * dead session is cleared so a relaunch doesn't reconnect (and fail) every time. */
+  private async authLoss(): Promise<void> {
+    this.qrAbort?.abort()
+    try {
+      await this.client?.disconnect()
+    } catch {
+      // Same.
+    }
+    this.client = undefined
+    this.phoneCodeHash = undefined
+    const credentials = this.credentials
+    this.auth = {
+      signedIn: false,
+      awaitingCode: false,
+      awaitingPassword: false,
+      bundled: BUNDLED_CREDENTIALS !== undefined,
+      ...(credentials && {
+        apiId: credentials.apiId,
+        apiHash: credentials.apiHash,
+        phone: credentials.phone
+      })
+    }
+    if (credentials) {
+      await saveStore({ credentials: seal(JSON.stringify(credentials)) }).catch(() => {})
+    } else {
+      await rm(STORE_PATH(), { force: true }).catch(() => {})
+    }
+    this.onChange?.(this.authState())
+  }
+
+  /** One fresh connection to `dcId` under this login: a GramJS exported sender, connected and
+   * authorized explicitly. The client's own connect helper is deliberately not used — it
+   * writes the authorization handshake into a shared init object, so several connections
+   * created at once clobber each other's handshake (AUTH_BYTES_INVALID). Falls back to the
+   * client's shared pooled sender when any of this fails. */
   private async createSender(dcId: number): Promise<{ sender: MTProtoSender; owned: boolean }> {
     const client = await this.ready()
     const internals = client as unknown as {
-      _makeSender(dcId: number, onBreak: (dcId: number, reason?: unknown) => void): MTProtoSender
-      _connectSender(sender: MTProtoSender, dcId: number): Promise<MTProtoSender>
+      _createExportedSender(dcId: number): MTProtoSender
+      _connection: new (options: {
+        ip: string
+        port: number
+        dcId: number
+        loggers: unknown
+        proxy: unknown
+        testServers: unknown
+        socket: unknown
+      }) => Parameters<MTProtoSender['connect']>[0]
+      _proxy: unknown
+      _log: unknown
+      testServers: unknown
+      networkSocket: unknown
+      _initRequest: Api.InvokeWithLayer
       getSender(dcId: number): Promise<MTProtoSender>
     }
-    const sender = internals._makeSender(dcId, () => {})
+    let sender: MTProtoSender | undefined
     try {
+      sender = internals._createExportedSender(dcId)
+      // The data center's address; an existing key for it says to ask the -1 test DC list
+      // instead, as the client's own connect helper does.
+      const hasKey = !!sender.authKey?.getKey()
+      const dc = await client.getDC(dcId, hasKey)
+      const connection = new internals._connection({
+        ip: dc.ipAddress,
+        port: dc.port,
+        dcId,
+        loggers: internals._log,
+        proxy: internals._proxy,
+        testServers: internals.testServers,
+        socket: internals.networkSocket
+      })
       // A connection attempt that hangs (an unreachable DC) must not hold the download; the
       // loser of the race is disconnected and the client's shared sender carries on instead.
-      const connecting = internals._connectSender(sender, dcId)
+      const connecting = (async (): Promise<void> => {
+        await sender!.connect(connection, false)
+        // Another data center needs this login's authorization exported to it — per sender,
+        // with the client's own identity copied in rather than its shared init object.
+        if ((client.session.dcId ?? 0) !== dcId) {
+          const auth = await client.invoke(new Api.auth.ExportAuthorization({ dcId }))
+          const identity =
+            internals._initRequest.query instanceof Api.InitConnection
+              ? internals._initRequest.query
+              : undefined
+          await sender!.send(
+            new Api.InvokeWithLayer({
+              layer: LAYER,
+              query: new Api.InitConnection({
+                apiId: identity?.apiId ?? this.credentials!.apiId,
+                deviceModel: identity?.deviceModel ?? 'Desktop',
+                systemVersion: identity?.systemVersion ?? 'unknown',
+                appVersion: identity?.appVersion ?? 'Plexo',
+                systemLangCode: identity?.systemLangCode ?? 'en',
+                langPack: identity?.langPack ?? '',
+                langCode: identity?.langCode ?? 'en',
+                query: new Api.auth.ImportAuthorization({ id: auth.id, bytes: auth.bytes })
+              })
+            })
+          )
+        }
+        ;(sender as unknown as { dcId: number }).dcId = dcId
+      })()
       void connecting.catch(() => {})
       await new Promise<void>((resolve, reject) => {
         const timer = setTimeout(

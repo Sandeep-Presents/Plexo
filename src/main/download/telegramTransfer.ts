@@ -43,7 +43,8 @@ export class TelegramFileError extends Error {
   }
 }
 
-/** upload.GetFile answers at most 1 MiB, at offsets and limits divisible by 4096. */
+/** upload.GetFile answers at most 1 MiB, at offsets and limits divisible by 4096 — and
+ * sometimes less, capped per region of the file, so the size adapts (see asOutcome). */
 export const FILE_CHUNK_BYTES = 1024 * 1024
 /** Readers, each holding one dedicated connection to Telegram's DC under the same login —
  * the shape of a fast download in Telegram's own desktop client. */
@@ -94,6 +95,10 @@ export class TelegramTransfer implements Transfer {
   private sourcePromise: Promise<TelegramFileSource> | undefined
   /** Until when Telegram asked every connection to slow down (see asOutcome). */
   private rateLimitedUntil = 0
+  /** The biggest chunk Telegram will answer for this file right now. It varies by region of
+   * the file (measured: 512 KiB fine at one offset, capped at 64 KiB a megabyte later), so it
+   * starts at the full chunk and halves on LIMIT_INVALID (see asOutcome). */
+  private maxChunkBytes = FILE_CHUNK_BYTES
 
   constructor(
     private readonly runtime: TelegramTransferTarget,
@@ -160,6 +165,7 @@ export class TelegramTransfer implements Transfer {
     this.workers.clear()
     this.stopped = false
     this.rateLimitedUntil = 0
+    this.maxChunkBytes = FILE_CHUNK_BYTES
     void this.disposeSource()
   }
 
@@ -312,7 +318,7 @@ export class TelegramTransfer implements Transfer {
    * to the 4096 alignment for a tail smaller than that (the answer is sliced down). */
   private chunkSize(block: HttpBlockState, offset: number): number {
     const end = block.rangeEnd === null ? Number.MAX_SAFE_INTEGER : block.rangeEnd + 1
-    const request = Math.min(FILE_CHUNK_BYTES, end - offset)
+    const request = Math.min(this.maxChunkBytes, end - offset)
     const aligned = Math.floor(request / 4096) * 4096
     return aligned > 0 ? aligned : 4096
   }
@@ -428,6 +434,15 @@ export class TelegramTransfer implements Transfer {
   /** Reads failure kinds the transfer acts on: a rate limit becomes a wait every reader
    * shares, auth and missing files end the download, the rest retry on this reader. */
   private asOutcome(self: ReaderRuntime, error: unknown): BlockOutcome {
+    const code =
+      (error as { errorMessage?: string } | null)?.errorMessage ??
+      (error instanceof Error ? error.message : String(error))
+    if (/LIMIT_INVALID/.test(code) && this.maxChunkBytes > 4096) {
+      // Telegram caps how big a single request may be, per region of the file: halve and
+      // take the block again at a size it will answer.
+      this.maxChunkBytes = Math.max(4096, this.maxChunkBytes >> 1)
+      return { type: 'retry', waitMs: 50 }
+    }
     if (error instanceof TelegramFileError) {
       if (error.kind === 'rate') {
         const waitMs = (error.waitSeconds ?? 1) * 1000

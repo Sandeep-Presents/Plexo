@@ -44,7 +44,7 @@
     "parse-torrent": "11.0.24",
     "qrcode": "^1.5.4",
     "react-day-picker": "^10.0.2",
-    "teleproto": "^1.230.1",
+    "telegram": "^2.26.22",
     "webtorrent": "3.0.21",
     "zustand": "^5.0.15"
   },
