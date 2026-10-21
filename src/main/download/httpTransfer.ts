@@ -1103,7 +1103,8 @@ export class HttpTransfer implements Transfer {
       nudge: new AbortController(),
       connection: new StreamConnection(() => this.host.networks.find(chunk.interfaceId), {
         timeoutMs: testKnobs.stallTimeoutMs,
-        connectTimeoutMs: testKnobs.connectTimeoutMs
+        connectTimeoutMs: testKnobs.connectTimeoutMs,
+        proxy: () => this.host.getProxyForInterface?.(chunk.interfaceId)
       }),
       attempt: null,
       warmSince: Date.now(),
