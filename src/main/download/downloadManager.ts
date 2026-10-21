@@ -1061,6 +1061,7 @@ export class DownloadManager {
         }
         stream.currentBlockIndex = undefined
         stream.hedge = undefined
+        stream.split = undefined
       }
     }
     for (const unit of unitsOf(runtime)) {
