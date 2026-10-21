@@ -269,6 +269,25 @@ test.describe('NZB downloads', () => {
     await plexo.waitForNzbStatus('completed', 30_000)
   })
 
+  test('a server that turns every connection away is unreachable, not a strike', async ({
+    plexo
+  }) => {
+    const server = await newsServer()
+    const { port } = server
+    await server.stop()
+    servers = []
+    await useServer(plexo, server, { port })
+
+    await plexo.start(await nzbOnDisk(server), server.expectedSha())
+    // Shown as it is for an HTTP server out of reach: one connection keeps trying, backing off.
+    await plexo.waitUntil(
+      (state) =>
+        state.kind === 'nzb' &&
+        state.networks.find((network) => network.id === 'a')?.status === 'unreachable',
+      15_000
+    )
+  })
+
   test('never more connections than the account allows', async ({ plexo }) => {
     const server = await newsServer({ maxConnections: 2, delayMs: 5 })
     // Set to more than the account has: the server turns the rest away.

@@ -5,7 +5,12 @@ import type {
   NzbSegmentState
 } from '../../../shared/types'
 import { testKnobs } from '../../testKnobs'
-import { ConnectionError, connectThrough, NoCompatibleRouteError } from '../../network/routes'
+import {
+  asConnectionError,
+  ConnectionError,
+  connectThrough,
+  NoCompatibleRouteError
+} from '../../network/routes'
 import { advanceBlock, retractBlock } from '../blockProgress'
 import { interleave } from '../plan'
 import {
@@ -407,6 +412,8 @@ export class NzbTransfer implements Transfer {
     const server = this.server!
     const iface = this.host.networks.find(networkId)
     if (!iface) throw new ConnectionError(new Error('The network is not connected'))
+    // Refused, timed out, or a failed TLS handshake: the server can't be reached, as with a
+    // dropped connection (see failed), rather than a strike against the server.
     const socket = await connectThrough(
       iface,
       server.host,
@@ -414,7 +421,9 @@ export class NzbTransfer implements Transfer {
       server.tls,
       Math.min(testKnobs.connectTimeoutMs, testKnobs.stallTimeoutMs),
       signal
-    )
+    ).catch((error: unknown) => {
+      throw asConnectionError(error)
+    })
     return NntpConnection.open(socket, {
       timeoutMs: testKnobs.stallTimeoutMs,
       username: server.username,
