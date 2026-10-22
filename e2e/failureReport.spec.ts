@@ -95,6 +95,7 @@ test.describe('opt-in private failure report @smoke', () => {
     const torrent: DownloadState = {
       ...state,
       kind: 'torrent',
+      networks: [{ ...network, transfer: 'torrent', bytesUploaded: 0, uploadSpeedBytesPerSec: 0 }],
       peers: [{
         id: 0, interfaceId: secret, status: 'connected', client: secret,
         bytesDownloaded: 0, speedBytesPerSec: 0, bytesUploaded: 0, uploadSpeedBytesPerSec: 0
