@@ -72,6 +72,8 @@ test.describe('torrent paths', () => {
     refused(['../evil'])
     refused(['Name/../../evil'])
     refused(['Name/A.txt', 'Name/a.txt'])
+    // One name precomposed, one decomposed: APFS saves them as the same file.
+    refused(['Name/caf\u00e9.txt', 'Name/cafe\u0301.txt'])
     refused(['Name/x', 'Name/x/y'])
     refused(['Name/::'])
     refused(['Name/CON.txt'], 'win32')
