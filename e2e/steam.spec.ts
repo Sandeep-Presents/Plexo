@@ -9,16 +9,16 @@ import { OWNED_DEPOTS, syntheticApp } from './steamOrigin'
 
 test.describe('steam downloads', () => {
   test('installs an owned game, its links, executables and empty files too @smoke', async ({
-    plexo,
+    netfuse,
     serveSteam
   }) => {
     const steam = await serveSteam(syntheticApp(), { guard: 'email' })
-    await plexo.startSteam(steam)
-    const done = await plexo.waitForSteamStatus('completed')
+    await netfuse.startSteam(steam)
+    const done = await netfuse.waitForSteamStatus('completed')
 
-    expect(done.destinationPath).toBe(join(plexo.dirs.dest, 'Plexo Test Game'))
+    expect(done.destinationPath).toBe(join(netfuse.dirs.dest, 'NetFuse Test Game'))
     expect(done.chunksDone).toBe(done.totalChunks)
-    expect(done.app).toMatchObject({ appId: 4000, name: 'Plexo Test Game', branch: 'public' })
+    expect(done.app).toMatchObject({ appId: 4000, name: 'NetFuse Test Game', branch: 'public' })
     expect(done.depots.map((depot) => depot.depotId)).toEqual(OWNED_DEPOTS)
     // treeSha counts regular files only: the rest is checked here.
     const link = join(done.destinationPath, 'game.sh')
@@ -34,21 +34,21 @@ test.describe('steam downloads', () => {
   })
 
   test('fetches each distinct chunk once, however many places it goes @smoke', async ({
-    plexo,
+    netfuse,
     serveSteam
   }) => {
     const steam = await serveSteam()
-    await plexo.startSteam(steam)
-    await plexo.waitForSteamStatus('completed')
+    await netfuse.startSteam(steam)
+    await netfuse.waitForSteamStatus('completed')
     const fetched = steam.chunkRequests().map((entry) => `${entry.depotId}/${entry.sha}`)
     expect(fetched.sort()).toEqual(steam.uniqueChunks().sort())
   })
 
-  test('spreads the chunks over two networks @smoke', async ({ plexo, serveSteam }) => {
+  test('spreads the chunks over two networks @smoke', async ({ netfuse, serveSteam }) => {
     test.skip(!LAN_ADDRESS, 'needs a second test network')
     const steam = await serveSteam(syntheticApp(2, 6), { bytesPerSecond: 2 * 1024 * 1024 })
-    await plexo.startSteam(steam, { networks: ['a', 'b'] })
-    const done = await plexo.waitForSteamStatus('completed', 40_000)
+    await netfuse.startSteam(steam, { networks: ['a', 'b'] })
+    const done = await netfuse.waitForSteamStatus('completed', 40_000)
     for (const network of done.networks) {
       expect(network.bytesDownloaded, `network ${network.id}`).toBeGreaterThan(0)
     }
@@ -57,27 +57,27 @@ test.describe('steam downloads', () => {
   })
 
   test('refuses a depot the account isn’t licensed for, and a password branch @smoke', async ({
-    plexo,
+    netfuse,
     serveSteam
   }) => {
     const steam = await serveSteam()
-    await plexo.loginSteam()
-    const details = await plexo.api.steamAppDetails(steam.app.appId)
+    await netfuse.loginSteam()
+    const details = await netfuse.api.steamAppDetails(steam.app.appId)
     expect(details.depots.find((depot) => depot.depotId === 4003)?.owned).toBe(false)
     expect(details.branches.find((branch) => branch.name === 'beta')?.passwordRequired).toBe(true)
 
     const prepare = (depotIds: number[], branch = 'public'): Promise<unknown> =>
-      plexo.api.steamPrepare({
+      netfuse.api.steamPrepare({
         appId: steam.app.appId,
         branch,
         depotIds,
-        destinationDir: plexo.dirs.dest,
+        destinationDir: netfuse.dirs.dest,
         adopt: false
       })
     await expect(prepare([4001, 4003])).rejects.toThrow(/isn’t licensed|not owned|doesn’t own/i)
     await expect(prepare([4001], 'beta')).rejects.toThrow(/Password-protected branches/)
     // Nothing was fetched for either, and nothing was made.
     expect(steam.chunkRequests()).toEqual([])
-    expect((await plexo.api.listDownloads()).length).toBe(0)
+    expect((await netfuse.api.listDownloads()).length).toBe(0)
   })
 })

@@ -16,10 +16,13 @@ import { TruncatedText } from './TruncatedText'
  * networks a download uses is picked on the game's page, which remembers the last pick. */
 export function NetworksMenu({
   onOpenLimits,
+  showSpeed = true,
   className
 }: {
   /** Opens Speed & data limits on that network's page, or General for null. */
   onOpenLimits: (page: string | null) => void
+  /** The total speed on the button too, where there's room for it. Each network's is inside. */
+  showSpeed?: boolean
   className?: string
 }): React.JSX.Element {
   const formatSpeed = useFormatSpeed()
@@ -68,7 +71,7 @@ export function NetworksMenu({
             <span className="shrink-0">
               {interfaces.length} {interfaces.length === 1 ? 'network' : 'networks'}
             </span>
-            {total > 0 && (
+            {showSpeed && total > 0 && (
               <span className="min-w-0 truncate font-mono text-[11.5px] text-muted-foreground">
                 {formatSpeed(total)}
               </span>

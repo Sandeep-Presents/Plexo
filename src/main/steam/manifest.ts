@@ -76,7 +76,7 @@ class Reader {
     return this.data[this.pos++]
   }
 
-  /** A varint as a number; one over 2^53 can't be a size or offset Plexo can address. */
+  /** A varint as a number; one over 2^53 can't be a size or offset NetFuse can address. */
   varint(): number {
     let result = 0
     let scale = 1
@@ -286,7 +286,7 @@ export function parseManifest(data: Uint8Array): Manifest {
       // Not checked by steam-user either: nothing documents the key it is signed with.
       sectionAt()
     } else if (magic === STEAM3_MAGIC) {
-      throw new ManifestError('This manifest is in an old format Plexo can’t read')
+      throw new ManifestError('This manifest is in an old format NetFuse can’t read')
     } else {
       throw new ManifestError('This is not a depot manifest')
     }

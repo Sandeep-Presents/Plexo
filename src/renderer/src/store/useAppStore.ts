@@ -106,13 +106,13 @@ interface AppStore {
 }
 
 // Settings saved by the main process, read once before the first paint (see InitialState).
-const initial = window.plexo.initialState
+const initial = window.netfuse.initialState
 
 /** Every setting changes optimistically: the store is updated first so the UI feels instant,
  * then this saves it. The store stays the source of truth either way — a failed save just means
  * the change isn't remembered next launch. */
 function persist(patch: AppSettings): void {
-  window.plexo.updateSettings(patch).catch(() => {})
+  window.netfuse.updateSettings(patch).catch(() => {})
 }
 
 export const useAppStore = create<AppStore>((set, get) => ({
@@ -149,7 +149,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
     if (get().interfacesStatus !== 'ready') set({ interfacesStatus: 'loading' })
     set({ interfacesError: null })
     try {
-      get().receiveInterfaces(await window.plexo.listInterfaces())
+      get().receiveInterfaces(await window.netfuse.listInterfaces())
     } catch (error) {
       set({
         interfacesStatus: 'error',
@@ -216,7 +216,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
     if (!refresh && library.status !== 'idle' && library.status !== 'error') return
     set({ library: { status: 'loading' } })
     try {
-      const apps = await window.plexo.steamOwnedApps(refresh)
+      const apps = await window.netfuse.steamOwnedApps(refresh)
       set({ library: { status: 'ready', apps } })
     } catch (error) {
       set({ library: { status: 'error', message: describeError(error) } })
@@ -227,7 +227,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   setLibraryFilter: (libraryFilter) => set({ libraryFilter }),
 
   loadClientApps: async () => {
-    const clientApps = await window.plexo.steamClientApps().catch(() => [])
+    const clientApps = await window.netfuse.steamClientApps().catch(() => [])
     set({ clientApps })
   },
 

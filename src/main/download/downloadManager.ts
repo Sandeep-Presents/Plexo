@@ -301,7 +301,7 @@ export class DownloadManager {
     this.scheduleTimer = setTimeout(
       () => {
         void this.refreshSchedule()
-          .catch((error) => console.error('[plexo] schedule', error))
+          .catch((error) => console.error('[netfuse] schedule', error))
           .finally(() => this.armScheduleTimer())
       },
       boundary ? Math.max(1, Math.min(1000, boundary - now)) : 1000
@@ -1010,7 +1010,7 @@ export class DownloadManager {
    * crawling connection) spans the sleep. All of it starts over. */
   systemResumed(): void {
     void this.refreshSchedule().catch((error) =>
-      console.error('[plexo] schedule after wake', error)
+      console.error('[netfuse] schedule after wake', error)
     )
     const now = Date.now()
     for (const runtime of this.runtimes.values()) {
@@ -1376,7 +1376,7 @@ export class DownloadManager {
     if (state.status !== 'downloading' || runtime.stop.signal.aborted) return
     if (!this.scheduleAllowsDownloads()) {
       void this.pause(state.id, true).catch((error) =>
-        console.error('[plexo] schedule cutoff', error)
+        console.error('[netfuse] schedule cutoff', error)
       )
       return
     }

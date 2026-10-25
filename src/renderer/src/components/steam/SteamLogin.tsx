@@ -27,7 +27,7 @@ export function SteamLogin({ state }: { state: SteamLoginState | null }): React.
     setError(null)
     work.catch((cause: unknown) => setError(describeError(cause)))
   }
-  const cancel = (): void => run(window.plexo.steamCancelLogin())
+  const cancel = (): void => run(window.netfuse.steamCancelLogin())
 
   if (!state || state.status === 'connecting') {
     return (
@@ -47,7 +47,7 @@ export function SteamLogin({ state }: { state: SteamLoginState | null }): React.
           event.preventDefault()
           const typed = code.trim()
           setCode('')
-          if (typed) run(window.plexo.steamSubmitCode(typed))
+          if (typed) run(window.netfuse.steamSubmitCode(typed))
         }}
       >
         <div className="text-[13px]">{where}</div>
@@ -116,7 +116,7 @@ export function SteamLogin({ state }: { state: SteamLoginState | null }): React.
   }
 
   // Logged out (a logged-in state never reaches here).
-  const startQr = (): void => run(window.plexo.steamLogin({ method: 'qr', remember }))
+  const startQr = (): void => run(window.netfuse.steamLogin({ method: 'qr', remember }))
   return (
     <form
       className="flex flex-col gap-3.5"
@@ -127,7 +127,7 @@ export function SteamLogin({ state }: { state: SteamLoginState | null }): React.
         // Not kept here a moment longer than it takes to hand it over.
         setPassword('')
         run(
-          window.plexo.steamLogin({
+          window.netfuse.steamLogin({
             method: 'credentials',
             accountName: accountName.trim(),
             password: typed,
@@ -137,7 +137,7 @@ export function SteamLogin({ state }: { state: SteamLoginState | null }): React.
       }}
     >
       <div className="text-[13px] text-[var(--text-secondary)]">
-        Log in to download the games this Steam account owns. Plexo keeps no password: Steam hands
+        Log in to download the games this Steam account owns. NetFuse keeps no password: Steam hands
         it a login token instead.
       </div>
       <ToggleGroup
@@ -206,8 +206,8 @@ export function SteamLogin({ state }: { state: SteamLoginState | null }): React.
           Stay logged in on this computer
           {!canRemember && (
             <span className="block text-muted-foreground">
-              This computer has no system keychain for Plexo to keep the login in, so you’ll log in
-              each time Plexo starts.
+              This computer has no system keychain for NetFuse to keep the login in, so you’ll log
+              in each time NetFuse starts.
             </span>
           )}
         </span>

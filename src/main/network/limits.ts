@@ -5,7 +5,7 @@ import { DEFAULT_SLOW_MODE_SPEED, type AppSettings, type DataLimitPeriod } from 
 import { readJson, updateJson } from '../jsonFile'
 
 // Speed and data limits, for every download together: what the user sets in Speed & data limits.
-// Every byte Plexo receives passes through take(), on the network it came in on — a manifest's
+// Every byte NetFuse receives passes through take(), on the network it came in on — a manifest's
 // and every chunk's — which says how long to stop reading for.
 // Stopping reading is what slows the sender: TCP's window fills, and it waits.
 

@@ -1,4 +1,4 @@
-// The part of steam-user Plexo calls, typed. steam-user ships no types, and @types/steam-user
+// The part of steam-user NetFuse calls, typed. steam-user ships no types, and @types/steam-user
 // lags behind it; declaring only what is used keeps the surface small and visible (see
 // steamUserBackend.ts, the only file that loads it).
 

@@ -1,5 +1,14 @@
 # Steam downloads: design
 
+## NetFuse
+
+This design was written and built as an addition to Plexo, a download accelerator for HTTP links and torrents. NetFuse is that work as an app of its own, focused on Steam and, later, other game launchers:
+
+- **Only Steam downloads are left.** The HTTP and torrent transfers, the browser extension, link handover and the download website are gone. Everything Steam used stays: multi-network pinning, speed and data limits, the queue and schedule, retries and stall handling, and the progress grid. The sections below still name the Plexo code they were planned against; where they describe HTTP or torrent behaviour, that code no longer exists.
+- **The window opens on the Steam login** and shows nothing else until there is one. Logged in, a sidebar leads to the library and the downloads (see "The window" below, which replaces the Steam dialog this design first planned).
+- **Saved downloads** are format version 1 of NetFuse's own, under its own app ID and user data folder: nothing of a Plexo install is read. With no Plexo cleanup to share a folder with, the `.plexo` name rules (change 6 below) are gone.
+- **A download stopped only for want of a login goes on by itself** once Steam is logged in.
+
 ## Context
 
 Plexo speeds up one download by spreading its chunks across several networks: Wi-Fi, Ethernet, a tethered phone. It handles HTTP links and torrents today. This plan adds a third kind, **Steam**. The depot chunks of a game the account owns are fetched over every selected network in parallel. Each request uses Plexo's own pinned connections and is counted through `Limits`. Each chunk is decrypted, decompressed and checked against the manifest before anything is written.
@@ -87,7 +96,7 @@ An independent review of the first draft, and building it, changed these points:
 | ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `backend.ts`                       | The `SteamBackend` interface, below.                                                                                                                                   |
 | `steamUserBackend.ts`              | The real backend. The only file that loads `steam-session` and `steam-user`, lazily, as `engine.ts` does for webtorrent.                                               |
-| `fakeBackend.ts`                   | Tests only. Active when `PLEXO_E2E_STEAM=<url>` is set; `testKnobs` ignores it in a packaged app. Talks to the local test server.                                      |
+| `fakeBackend.ts`                   | Tests only. Active when `NETFUSE_E2E_STEAM=<url>` is set; `testKnobs` ignores it in a packaged app. Talks to the local test server.                                    |
 | `account.ts`                       | Login state machine and refresh-token storage.                                                                                                                         |
 | `library.ts`                       | Owned apps and app details, cached per session.                                                                                                                        |
 | `prepare.ts`                       | Turns a request into a plan: manifests over a pinned connection, layout, sizes, free space. Plans live in an LRU keyed by `planId`, like `probedTorrentFile`.          |
@@ -300,7 +309,7 @@ It works from a cursor plus a requeue ring, so a pick costs O(1) amortised. The 
 ## Credentials and privacy
 
 - **Passwords and Guard codes** are passed through once and never stored or logged.
-- **The refresh token** is stored with `safeStorage.encryptString` in `userData/steam-account.json`, using the same rule as `sealBrowser`: unavailable, or Linux `basic_text`, means it is kept in memory only and the UI says "Plexo can't remember this login on this computer".
+- **The refresh token** is stored with `safeStorage.encryptString` in `userData/steam-account.json`: unavailable, or Linux `basic_text`, means it is kept in memory only and the login screen says the login can't be remembered on this computer.
 - **Refresh tokens Steam renews** are re-encrypted.
 - **Logout** deletes the stored token and logs the client off.
 - **What the renderer gets:** `SteamLoginState` only. The QR is sent as a boolean matrix, not as the challenge URL.
@@ -310,7 +319,7 @@ It works from a cursor plus a requeue ring, so a pick costs O(1) amortised. The 
   - Only depots from the account's non-expired licenses are offered. Borrowed (Family Sharing) licenses are included and labelled.
   - Steam's own key and manifest-code refusal (AccessDenied and others) stops the download with a plain message.
   - No anonymous login. Password-protected branches are listed but disabled, with "Password-protected branches aren't supported".
-- **Network calls.** Only Steam endpoints are contacted: the CM websocket, `api.steampowered.com` and the content servers Steam hands out.
+- **Network calls.** Only Steam endpoints are contacted: the CM websocket, `api.steampowered.com`, the content servers Steam hands out, and Steam's store CDN (`shared.akamai.steamstatic.com`) for the games' pictures, which need no login and carry nothing of the account.
 - **Known limitation, documented:** the control-plane traffic (CM websocket, WebAPI) uses the system's default route and isn't counted toward per-network data limits. It is small. Manifests and chunks are pinned and counted.
 
 ## IPC additions
@@ -333,37 +342,21 @@ Push events: `steamLoginStateChanged`, `steamPrepareProgress`.
 
 Every handler checks its arguments at runtime: integers, string lengths, branch names, a code format, depot ids that are a subset of the owned depots.
 
-## UI plan
+## The window
 
-- **Entry point:** a "Steam" button in the Downloads screen header, beside New download. It opens a dedicated `SteamDialog` (store field `steam`, which can also open it on one app), 720px wide. Opening it is the first time the window asks for the login state, which is what logs in with a remembered login: Plexo doesn't contact Steam at launch.
-- **Login step:**
-  - Password and QR code side by side, chosen with a ToggleGroup.
-  - Guard code entry for email or the mobile authenticator, or "Approve on your phone".
-  - Readable errors. "Remember me" is disabled with the reason when it can't be offered.
-- **Library step:**
-  - Account bar with log out.
-  - Search box over owned apps, with a windowed list.
-- **App step:**
-  - Branch, then OS, architecture and language filters, then a depot checklist with the defaults pre-ticked. DLC and shared depots are labelled.
+- **Login first.** Until Steam is logged in, the window shows only the login (`LoginScreen`, with `SteamLogin` in it): account name and password or a QR code, then a Steam Guard code or an approval in the mobile app. The first login-state request waits until the stored login has been looked for, so someone who stays logged in never sees the form flash up. "Stay logged in" is disabled, with the reason, when there's no system keychain.
+- **Sidebar.** Under Library, a row per launcher (Steam, with its game count); under Transfers, Downloads with how many are unfinished. At its foot the networks menu (with Speed & data limits and the schedule) and the account, whose menu logs out. Another launcher gets a row and a library screen; nothing else moves.
+- **Library** (`LibraryScreen`). Every owned game by its portrait picture, searched by name or app id and filtered by All, Installed or Not installed. Each card says where the game stands: its download's progress, installed by NetFuse, or installed by the Steam client (an `appmanifest_<id>.acf` in one of its libraries, `steamClientApps`). Only the rows in view are drawn, so a library of thousands stays light.
+- **Pictures** (`steam/art.ts`). The window asks for `game-art://steam/<appId>/<capsule|header|hero>`; the main process fetches it from Steam's store CDN, at the path the app's appinfo gives or Steam's usual file name, and keeps it under `userData/art`. Six at a time, at most 12 MB, JPEG, PNG or WebP only; a picture Steam doesn't have is noted as missing for three days. A game with no portrait picture shows its header over a blur of itself, and one with neither its name on a color of its own.
+- **Game page** (`GameScreen`). Its banner, name and state, a way to its download or its install folder, then what to install:
+  - Branch, then OS, architecture and language filters, then a depot checklist with the defaults pre-ticked. DLC and shared depots are labelled, and a borrowed license says Family Sharing.
   - Download and install sizes, free space, a "Save to" folder with Change and Auto-detect.
     - Auto-detect finds the Steam client (the registry and Program Files on Windows, the usual folders on macOS and Linux, Flatpak and Snap included) and reads its `libraryfolders.vdf` (`steam/libraryFolders.ts`, pure). It offers each library's `steamapps/common`, those that already have the game first.
     - Picking one that has the game ticks "install over the existing folder", so only what's missing or different is fetched.
-    - The Steam dialog's folder is saved apart from New download's (`steamDestinationDir`).
     - Steam itself lists the game once Install is clicked on it in Steam, which finds the files; writing Steam's `appmanifest` is Phase 4.
-  - An option to install over an existing folder (verify and repair).
-  - Network chips: a small copy of NewDownloadDialog's, since extracting them would have changed that dialog (its single-stream rules don't apply to Steam).
-  - "Fetching file lists: 2 of 3 depots" progress, then the download starts and its downloading screen opens. The plan's warnings (long Windows paths, symlinks on Windows) are shown first, with "Download anyway".
+  - Network chips, and "Fetching file lists: 2 of 3 depots" progress; then the download starts and its own screen opens. The plan's warnings (long Windows paths, symlinks on Windows) are shown first, with "Download anyway".
   - The depot choice is worked out by `shared/steamSelection.ts`, the same code the main process checks it with.
-- **Existing screens:**
-  - A `SteamBadge`.
-  - Streams shown with `HttpStreamRows`, including their host.
-  - BlockGrid over cells, with the unit label "part". Cells keep the screen bounded however big the game is.
-  - Phase lines: "Preparing files…", "Checking existing files 12%".
-  - The Complete screen counts "chunks".
-  - The Error screen gives no "Copy link". A download stopped for want of a login offers "Log in to Steam", which opens the dialog; Retry then resumes it.
-  - "Download again" on a Steam download opens the Steam dialog on that game.
-  - Cancel and Move to Trash say what they do to a game: a cancel removes only what it installed; the Trash takes the whole install folder, with anything the game saved there.
-  - Every "not http means torrent" ternary is made explicit.
+- **Downloads** and each download's own screen: the game's picture, streams with their content server, the grid over cells ("parts"), phase lines ("Preparing files…"), the Complete screen counting chunks. "Download again" opens the game's page. Cancel and Move to Trash say what they do to a game: a cancel removes only what it installed; the Trash takes the whole install folder, with anything the game saved there.
 - **Error messages** cover: not owned or refused, region-restricted, rate limited, login expired ("Log in to Steam to continue", resumable), password branch, disk full, damaged chunk.
 
 ## Test plan
@@ -443,7 +436,7 @@ What it would take, recorded in `DESIGN.md` for later:
   - `npm ci` (Node 22.13+);
   - `npm run dev`, `lint`, `typecheck`, `format:check`;
   - `xvfb-run … npm run test:e2e:smoke`;
-  - `PLEXO_E2E_SKIP_BUILD=1`;
+  - `NETFUSE_E2E_SKIP_BUILD=1`;
   - the chaos seed and runs variables.
 - **Conventions:**
   - Comments explain _why_, in plain sentences.

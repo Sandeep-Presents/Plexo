@@ -127,12 +127,12 @@ export const DownloadingScreen = memo(function DownloadingScreen({
   useEffect(() => {
     if (isPaused) {
       const label = isQueued ? 'Queued' : 'Paused'
-      document.title = knownSize ? `Plexo — ${label} (${percent}%)` : `Plexo — ${label}`
+      document.title = knownSize ? `NetFuse — ${label} (${percent}%)` : `NetFuse — ${label}`
     } else {
-      document.title = knownSize ? `Plexo — ${percent}%` : 'Plexo — downloading'
+      document.title = knownSize ? `NetFuse — ${percent}%` : 'NetFuse — downloading'
     }
     return () => {
-      document.title = 'Plexo'
+      document.title = 'NetFuse'
     }
   }, [percent, knownSize, isPaused, isQueued])
 
@@ -452,7 +452,7 @@ export const DownloadingScreen = memo(function DownloadingScreen({
                 }
                 totalBytes={download.totalBytes}
                 onSwitch={(enabled) =>
-                  void window.plexo.setDownloadNetwork(download.id, row.id, enabled)
+                  void window.netfuse.setDownloadNetwork(download.id, row.id, enabled)
                 }
               />
             ))}

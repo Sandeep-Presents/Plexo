@@ -31,12 +31,12 @@
     ],
     win: ['One installer covers both regular (x64) and ARM PCs.'],
     linux: [
-      'AppImage: `chmod +x plexo-*.AppImage`, then run it. Recent Ubuntu needs FUSE 2 first: `sudo apt install libfuse2t64` (older releases call it `libfuse2`) — or use the .deb, which needs nothing extra.',
-      '.deb: `sudo apt install ./plexo_*.deb`.',
-      '.rpm (Fedora / RHEL): `sudo dnf install ./plexo-*.rpm`.',
-      '.tar.gz (Arch, or anywhere without FUSE): `tar xzf plexo-*.tar.gz`, then run `./plexo` inside the extracted folder.',
+      'AppImage: `chmod +x netfuse-*.AppImage`, then run it. Recent Ubuntu needs FUSE 2 first: `sudo apt install libfuse2t64` (older releases call it `libfuse2`) — or use the .deb, which needs nothing extra.',
+      '.deb: `sudo apt install ./netfuse_*.deb`.',
+      '.rpm (Fedora / RHEL): `sudo dnf install ./netfuse-*.rpm`.',
+      '.tar.gz (Arch, or anywhere without FUSE): `tar xzf netfuse-*.tar.gz`, then run `./netfuse` inside the extracted folder.',
       'Don’t open the AppImage with Disks (it isn’t a disk image — an “image is smaller than the target device” message means it was opened there). Make it executable and run it as above.',
-      'Using more than one network needs Linux kernel 5.7 or newer (any current distro); on older kernels Plexo can only use the default network.'
+      'Using more than one network needs Linux kernel 5.7 or newer (any current distro); on older kernels NetFuse can only use the default network.'
     ]
   }
 
@@ -156,7 +156,7 @@
     return out.join('\n').trimEnd()
   }
 
-  root.PlexoDownloads = {
+  root.NetFuseDownloads = {
     describe: describe,
     markdown: markdown,
     formatSize: formatSize

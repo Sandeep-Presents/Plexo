@@ -1,7 +1,8 @@
-appId: com.plexo.app
-productName: Plexo
+appId: com.netfuse.app
+productName: NetFuse
 # Shown in the macOS About window and Finder's Get Info, and in the Windows file properties.
-copyright: Copyright © 2026 Anmol Kapil
+# NetFuse is built on Plexo, whose MIT notice is kept in LICENSE.
+copyright: Copyright © 2026 MerikhSS and Anmol Kapil
 directories:
   buildResources: build
 files:
@@ -18,7 +19,7 @@ files:
 asarUnpack:
   - resources/**
 win:
-  executableName: plexo
+  executableName: netfuse
   target:
     - target: nsis
       arch: [x64, arm64]
@@ -43,7 +44,7 @@ mac:
       arch: [x64, arm64]
   entitlementsInherit: build/entitlements.mac.plist
   extendInfo:
-    - NSDownloadsFolderUsageDescription: Plexo installs games to a folder you choose, which may be in your Downloads folder.
+    - NSDownloadsFolderUsageDescription: NetFuse installs games to a folder you choose, which may be in your Downloads folder.
   # Signed when CSC_LINK/CSC_KEY_PASSWORD are set, and then notarized when APPLE_API_KEY,
   # APPLE_API_KEY_ID and APPLE_API_ISSUER are (see .github/workflows/release.yml). An unsigned
   # build still works, but can't update itself: macOS only installs signed updates.
@@ -58,14 +59,14 @@ linux:
     - target: rpm
       arch: [x64, arm64]
     # Plain archive for distros without FUSE or a native package (AUR packagers, NixOS, etc.):
-    # extract and run ./plexo. Doesn't update itself, like the .deb and .rpm.
+    # extract and run ./netfuse. Doesn't update itself, like the .deb and .rpm.
     - target: tar.gz
       arch: [x64, arm64]
   # Names the .tar.gz, which has no options of its own. Without it the x64 archive would carry no
   # architecture. The deb and rpm sections below keep their usual names, since they'd otherwise
   # inherit this one.
   artifactName: ${name}-${version}-${arch}.${ext}
-  maintainer: electronjs.org
+  maintainer: MerikhSS
   category: Game
 appImage:
   artifactName: ${name}-${version}-${arch}.${ext}
@@ -78,6 +79,6 @@ npmRebuild: false
 # workflow uploads them, with the latest*.yml files the updater reads.
 publish:
   provider: github
-  # This fork's own releases: Plexo's would update a build of it to one without Steam downloads.
+  # NetFuse's own releases.
   owner: MerikhSS
   repo: plexo_steam-

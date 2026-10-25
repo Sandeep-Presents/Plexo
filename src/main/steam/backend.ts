@@ -1,8 +1,8 @@
-// Everything Plexo asks of Steam itself, as opposed to the content servers: logging in, what the
+// Everything NetFuse asks of Steam itself, as opposed to the content servers: logging in, what the
 // account owns, apps' details, depot keys, manifest request codes, the content server list and
 // CDN tokens. steamUserBackend.ts answers it with steam-session and steam-user; the end-to-end
 // tests answer it with a fake (fakeBackend.ts), so everything past this seam — manifests and
-// chunks over Plexo's own pinned connections — runs the same code in both.
+// chunks over NetFuse's own pinned connections — runs the same code in both.
 //
 // Secrets cross this seam (refresh tokens, depot keys, CDN tokens) and stay in the main process:
 // none of it is ever sent to the window, saved in the clear, or logged.

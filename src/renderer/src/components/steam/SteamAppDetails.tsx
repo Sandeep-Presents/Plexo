@@ -88,7 +88,7 @@ export function InstallOptions({
     branch: details.branches.some((branch) => branch.name === 'public')
       ? 'public'
       : (details.branches.find((branch) => !branch.passwordRequired)?.name ?? 'public'),
-    ...steamSystem(window.plexo.platform, 'x64'),
+    ...steamSystem(window.netfuse.platform, 'x64'),
     language: defaultLanguage(details)
   }))
   const [chosen, setChosen] = useState<number[]>(() => defaultDepots(details, selection))
@@ -108,7 +108,7 @@ export function InstallOptions({
 
   useEffect(() => {
     let stale = false
-    window.plexo
+    window.netfuse
       .freeSpace(destinationDir)
       .then((bytes) => !stale && setFreeBytes(bytes))
       .catch(() => !stale && setFreeBytes(null))
@@ -119,7 +119,7 @@ export function InstallOptions({
 
   useEffect(
     () =>
-      window.plexo.onSteamPrepareProgress((progress) => {
+      window.netfuse.onSteamPrepareProgress((progress) => {
         if (progress.appId !== details.appId) return
         setStart((now) => (now.status === 'preparing' ? { status: 'preparing', progress } : now))
       }),
@@ -165,7 +165,7 @@ export function InstallOptions({
   const begin = async (plan: SteamPlan): Promise<void> => {
     setStart({ status: 'starting' })
     try {
-      const id = await window.plexo.startDownload({
+      const id = await window.netfuse.startDownload({
         kind: 'steam',
         planId: plan.planId,
         interfaceIds: networkIds
@@ -181,7 +181,7 @@ export function InstallOptions({
     setError(null)
     setStart({ status: 'preparing', progress: null })
     try {
-      const plan = await window.plexo.steamPrepare({
+      const plan = await window.netfuse.steamPrepare({
         appId: details.appId,
         branch: selection.branch,
         depotIds: picked.map((depot) => depot.depotId),
@@ -207,7 +207,7 @@ export function InstallOptions({
   const autoDetect = async (): Promise<void> => {
     setDetect({ status: 'looking' })
     try {
-      const found = await window.plexo.steamLibraryFolders(folderName)
+      const found = await window.netfuse.steamLibraryFolders(folderName)
       setLibraries(found)
       if (found.length === 0) setDetect({ status: 'none' })
       else if (found.length === 1) pickLibrary(found[0])
@@ -347,7 +347,7 @@ export function InstallOptions({
             size="sm"
             disabled={busy}
             onClick={async () => {
-              const folder = await window.plexo.chooseDestinationFolder(destinationDir)
+              const folder = await window.netfuse.chooseDestinationFolder(destinationDir)
               if (folder) {
                 setDestinationDir(folder)
                 setDetect({ status: 'idle' })
@@ -359,7 +359,7 @@ export function InstallOptions({
         </div>
         {detect.status === 'none' && (
           <div className="text-[12px] text-muted-foreground">
-            Plexo couldn’t find Steam on this computer. Choose the folder with Change.
+            NetFuse couldn’t find Steam on this computer. Choose the folder with Change.
           </div>
         )}
         {detect.status === 'choose' && (

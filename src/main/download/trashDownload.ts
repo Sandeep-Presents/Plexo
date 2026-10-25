@@ -6,7 +6,7 @@ import type { DownloadState, FinishedDownload } from '../../shared/types'
 export async function trashDownload(download: DownloadState | FinishedDownload): Promise<void> {
   if (download.adopted) {
     throw new Error(
-      'This game was installed into a folder that was already there, so Plexo won’t move it to the Trash. Remove it from the list, then manage the folder in your file browser.'
+      'This game was installed into a folder that was already there, so NetFuse won’t move it to the Trash. Remove it from the list, then manage the folder in your file browser.'
     )
   }
   await shell.trashItem(download.destinationPath)

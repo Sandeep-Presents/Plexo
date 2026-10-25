@@ -46,7 +46,7 @@ async function openNetworkSettings(): Promise<void> {
 }
 
 /** Typed wrapper around ipcMain.handle — the channel name picks its args/result shape out of
- * IpcContract, so a handler here that doesn't match what plexoApi (preload) actually calls is a
+ * IpcContract, so a handler here that doesn't match what netfuseApi (preload) actually calls is a
  * compile error instead of a silent runtime mismatch. */
 function handle<K extends keyof IpcContract>(
   channel: K,
@@ -227,7 +227,7 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
         destinationDir: destinationExists ? destinationDir : undefined
       } satisfies InitialState
     } catch (error) {
-      console.error('[plexo] failed to read initial state', error)
+      console.error('[netfuse] failed to read initial state', error)
       // No getPath() here — it may be what threw. An empty destination just keeps Start disabled.
       event.returnValue = {
         homeDir: '',

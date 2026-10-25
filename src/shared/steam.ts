@@ -11,7 +11,7 @@ export interface SteamBranch {
   name: string
   buildId: string
   description?: string
-  /** A password-protected (private) branch: listed, but Plexo doesn't download those. */
+  /** A password-protected (private) branch: listed, but NetFuse doesn't download those. */
   passwordRequired: boolean
   /** Seconds since the epoch. */
   updatedAt?: number

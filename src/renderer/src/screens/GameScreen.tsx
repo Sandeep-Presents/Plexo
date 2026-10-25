@@ -31,7 +31,7 @@ export function GameScreen({ appId }: { appId: number }): React.JSX.Element {
 
   useEffect(() => {
     let stale = false
-    window.plexo
+    window.netfuse
       .steamAppDetails(appId)
       .then((details) => !stale && setLoad({ status: 'ready', details }))
       .catch((error: unknown) => {
@@ -174,7 +174,7 @@ function StateCard({ state }: { state: GameState }): React.JSX.Element | null {
           variant="secondary"
           onClick={() => void perform('reveal', [download])}
         >
-          {window.plexo.platform === 'darwin' ? 'Show in Finder' : 'Show in folder'}
+          {window.netfuse.platform === 'darwin' ? 'Show in Finder' : 'Show in folder'}
         </Button>
       )}
       <Button

@@ -6,8 +6,8 @@ import { useAppStore } from '../store/useAppStore'
 export function useSteamEvents(): void {
   const receive = useAppStore((store) => store.receiveSteamLogin)
   useEffect(() => {
-    const stop = window.plexo.onSteamLoginState(receive)
-    void window.plexo
+    const stop = window.netfuse.onSteamLoginState(receive)
+    void window.netfuse
       .steamLoginState()
       .then(receive)
       .catch(() => {})

@@ -136,7 +136,7 @@ export function DownloadsScreen(): React.JSX.Element {
         document.querySelector('[role="dialog"], [role="alertdialog"], [role="menu"]')
       )
         return
-      const command = window.plexo.platform === 'darwin' ? event.metaKey : event.ctrlKey
+      const command = window.netfuse.platform === 'darwin' ? event.metaKey : event.ctrlKey
       if (event.key === 'Escape') setSelected(new Set())
       else if (command && event.key.toLowerCase() === 'a') {
         event.preventDefault()
@@ -331,7 +331,7 @@ function EmptyState(): React.JSX.Element {
         <>
           <div className="font-sans text-[16px] leading-[1.2] font-bold">No networks connected</div>
           <div className="max-w-[380px] text-[12.5px] leading-[1.6] text-[var(--text-secondary)]">
-            Plexo needs at least one active network. Join a Wi-Fi network, plug in Ethernet, or
+            NetFuse needs at least one active network. Join a Wi-Fi network, plug in Ethernet, or
             connect your phone using USB tethering.
           </div>
           <div className="mt-1 flex gap-2">
@@ -341,7 +341,7 @@ function EmptyState(): React.JSX.Element {
             <Button
               type="button"
               variant="secondary"
-              onClick={() => window.plexo.openNetworkSettings()}
+              onClick={() => window.netfuse.openNetworkSettings()}
             >
               Network settings
             </Button>

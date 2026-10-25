@@ -135,7 +135,7 @@ class Session implements SteamSession {
     client.on('error', (error: unknown) => {
       if (this.loggingOff) return
       const eresult = eresultOf(error)
-      const reason = loginMessage(eresult, 'Steam logged Plexo out.')
+      const reason = loginMessage(eresult, 'Steam logged NetFuse out.')
       for (const listener of this.logoutListeners) listener(reason, loginExpired(eresult))
     })
   }
@@ -325,7 +325,7 @@ export function steamUserBackend(): SteamBackend {
           client.logOn({ refreshToken })
         }),
         LOGON_TIMEOUT_MS,
-        'Plexo couldn’t reach Steam. Check your connection and try again.'
+        'NetFuse couldn’t reach Steam. Check your connection and try again.'
       ).catch((error) => {
         client.logOff()
         client.removeAllListeners()

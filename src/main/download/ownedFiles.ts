@@ -28,7 +28,7 @@ export async function ownedFiles(
       within === '..' ||
       within.startsWith(`..${sep}`)
     ) {
-      throw new Error('Plexo can’t safely remove these files.')
+      throw new Error('NetFuse can’t safely remove these files.')
     }
     let parent = dirname(target)
     while (true) {

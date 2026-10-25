@@ -130,7 +130,7 @@ export class SteamLibrary {
   async appDetails(appId: number): Promise<SteamAppDetails> {
     const { session, apps, depots } = await this.owned()
     if (!apps.has(appId)) {
-      throw new Error('This Steam account doesn’t own this app, so Plexo won’t download it.')
+      throw new Error('This Steam account doesn’t own this app, so NetFuse won’t download it.')
     }
     const info = await session.productInfo([appId], [])
     const entry = info.apps[String(appId)]

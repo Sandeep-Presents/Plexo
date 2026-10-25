@@ -10,7 +10,7 @@ const ERROR_HINTS: Array<{ pattern: RegExp; message: string }> = [
   {
     pattern: /EACCES|EPERM/,
     message:
-      'Plexo doesn’t have permission to access this file or folder. Check its permissions or choose another folder.'
+      'NetFuse doesn’t have permission to access this file or folder. Check its permissions or choose another folder.'
   },
   {
     pattern: /ENOENT/,
@@ -19,15 +19,15 @@ const ERROR_HINTS: Array<{ pattern: RegExp; message: string }> = [
   { pattern: /EROFS/, message: 'This drive is read-only. Choose another folder.' },
   {
     pattern: /EIO/,
-    message: 'Plexo couldn’t read or write the install. Check the drive and try again.'
+    message: 'NetFuse couldn’t read or write the install. Check the drive and try again.'
   },
   {
     pattern: /Download is incomplete/,
-    message: 'Plexo couldn’t download every part of the game. Try again.'
+    message: 'NetFuse couldn’t download every part of the game. Try again.'
   },
   {
     pattern: /ENOTFOUND|EAI_AGAIN/,
-    message: 'Plexo couldn’t reach Steam. Check your connection.'
+    message: 'NetFuse couldn’t reach Steam. Check your connection.'
   },
   {
     pattern: /ECONNREFUSED/,

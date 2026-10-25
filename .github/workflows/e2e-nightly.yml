@@ -39,18 +39,18 @@ jobs:
         if: runner.os == 'Linux'
         run: xvfb-run --auto-servernum --server-args="-screen 0 1280x1024x24 -noreset" npx playwright test
         env:
-          PLEXO_E2E_SKIP_BUILD: '1'
+          NETFUSE_E2E_SKIP_BUILD: '1'
 
       - name: Full suite (Windows)
         if: runner.os == 'Windows'
         run: npx playwright test
         env:
-          PLEXO_E2E_SKIP_BUILD: '1'
+          NETFUSE_E2E_SKIP_BUILD: '1'
 
       - name: Race-prone tests, repeated
         run: ${{ runner.os == 'Linux' && 'xvfb-run --auto-servernum --server-args="-screen 0 1280x1024x24 -noreset" ' || '' }}npx playwright test e2e/steamLifecycle.spec.ts --repeat-each=10
         env:
-          PLEXO_E2E_SKIP_BUILD: '1'
+          NETFUSE_E2E_SKIP_BUILD: '1'
 
       - name: Upload report
         if: failure()

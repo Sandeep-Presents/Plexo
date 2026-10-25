@@ -10,7 +10,7 @@ import {
 } from '../src/main/steam/manifest'
 import { buildManifest, seeded, zipOne } from './steamContent'
 
-// Depot manifests: Plexo's own bounded protobuf reader against steam-user's protobufjs one, on
+// Depot manifests: NetFuse's own bounded protobuf reader against steam-user's protobufjs one, on
 // manifests built the way Steam's tools build them, and on everything a network can send instead.
 
 const KEY = Buffer.alloc(32, 9)

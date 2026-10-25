@@ -14,10 +14,10 @@ import { contentMessage, loginExpired, loginMessage } from './eresult'
 // Steam, as the end-to-end tests stand it up (e2e/steamOrigin.ts): a local server answering what
 // steam-session and steam-user would ask the real one, so a Steam download can be driven from
 // login to the last chunk with no Steam account and no internet. Only the control plane is
-// faked: manifests and chunks still come over Plexo's own pinned connections, from the same
+// faked: manifests and chunks still come over NetFuse's own pinned connections, from the same
 // server, through the same code as a real download.
 //
-// Chosen by the PLEXO_E2E_STEAM test knob, which a packaged app ignores (see testKnobs.ts).
+// Chosen by the NETFUSE_E2E_STEAM test knob, which a packaged app ignores (see testKnobs.ts).
 
 interface Refusal {
   error: string

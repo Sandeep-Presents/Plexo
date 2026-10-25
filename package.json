@@ -1,9 +1,9 @@
 {
-  "name": "plexo",
-  "version": "1.0.0-rc.15",
-  "description": "Speed up downloads by combining multiple network connections in parallel",
+  "name": "netfuse",
+  "version": "0.1.0",
+  "description": "Download your Steam games over every network you have at once",
   "main": "./out/main/index.js",
-  "author": "Anmol Kapil",
+  "author": "MerikhSS",
   "homepage": "https://github.com/MerikhSS/plexo_steam-",
   "scripts": {
     "format": "prettier --write .",

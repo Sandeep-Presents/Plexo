@@ -20,7 +20,7 @@ import { manifestUrl, rankServers, ServerPool, TokenCache } from './servers'
 
 // From what the user picked (an app, a branch, depots, a folder) to a download ready to start:
 // every depot's manifest fetched over one of the user's networks (pinned and counted through
-// Limits like every other byte Plexo receives), decrypted, and turned into the install's layout,
+// Limits like every other byte NetFuse receives), decrypted, and turned into the install's layout,
 // every path checked before anything is written. Installing over an existing folder also checks
 // what is already there, chunk by chunk, so only what is missing or different is fetched.
 //
@@ -33,7 +33,7 @@ const PLAN_TTL_MS = 30 * 60_000
 const MAX_MANIFEST_DOWNLOAD = 256 * 1024 * 1024
 /** Content servers a manifest is tried from, on each network, before giving up. */
 const MANIFEST_SERVERS = 4
-/** Windows' traditional limit: longer paths work for Plexo, but not for every program. */
+/** Windows' traditional limit: longer paths work for NetFuse, but not for every program. */
 const WINDOWS_PATH_LIMIT = 260
 
 export interface PreparedDepot {
@@ -196,7 +196,7 @@ export class SteamPlanner {
         }
         if (layout.files.some((file) => file.kind === 'symlink')) {
           warnings.push(
-            'This game has symbolic links, which Windows lets Plexo create only with Developer Mode on.'
+            'This game has symbolic links, which Windows lets NetFuse create only with Developer Mode on.'
           )
         }
       }

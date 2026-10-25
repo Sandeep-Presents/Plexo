@@ -1,5 +1,5 @@
 // The libraries Steam test fixtures are built with, and the pure Steam modules are checked
-// against. None of them is on Plexo's data path; they have no types of their own.
+// against. None of them is on NetFuse's data path; they have no types of their own.
 
 declare module '@doctormckay/steam-crypto' {
   export function symmetricEncrypt(input: Buffer, key: Buffer, iv?: Buffer): Buffer

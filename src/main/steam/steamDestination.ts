@@ -150,7 +150,7 @@ export class SteamDestination {
     } catch (error) {
       if (process.platform === 'win32' && (error as NodeJS.ErrnoException).code === 'EPERM') {
         throw new Error(
-          'This game has symbolic links, and Windows lets Plexo create them only with Developer Mode on. Turn it on in Settings, then resume.'
+          'This game has symbolic links, and Windows lets NetFuse create them only with Developer Mode on. Turn it on in Settings, then resume.'
         )
       }
       throw error

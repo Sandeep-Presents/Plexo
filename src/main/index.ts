@@ -12,7 +12,7 @@ import type { DownloadManager } from './download/downloadManager'
 // In dev mode the app runs as the raw `electron` binary, which otherwise shows "Electron" in
 // the Dock tooltip/menu bar — must be set before the app is ready. Packaged builds already get
 // this from electron-builder's productName, but setting it here keeps dev and packaged in sync.
-app.setName('Plexo')
+app.setName('NetFuse')
 
 // Each e2e test runs against its own throwaway userData folder (downloads, manifests, settings).
 if (testKnobs.userDataDir) app.setPath('userData', testKnobs.userDataDir)
@@ -20,7 +20,7 @@ if (testKnobs.userDataDir) app.setPath('userData', testKnobs.userDataDir)
 // Game pictures, which the window loads as game-art:// (see steam/art.ts).
 registerArtScheme()
 
-// One Plexo at a time (per userData folder, so parallel e2e runs each have their own): a second
+// One NetFuse at a time (per userData folder, so parallel e2e runs each have their own): a second
 // launch brings the first one's window forward and exits.
 if (!app.requestSingleInstanceLock()) app.exit(0)
 
@@ -57,7 +57,7 @@ function createWindow(): void {
     minHeight: 620,
     show: false,
     autoHideMenuBar: true,
-    title: 'Plexo',
+    title: 'NetFuse',
     // Matches the renderer's dark-mode background so a live window resize
     // (which briefly exposes the raw window background) doesn't flash white.
     backgroundColor: nativeTheme.shouldUseDarkColors ? '#1c1c1e' : '#ffffff',
@@ -118,11 +118,11 @@ function createWindow(): void {
 }
 
 app.whenReady().then(async () => {
-  electronApp.setAppUserModelId('com.plexo.app')
+  electronApp.setAppUserModelId('com.netfuse.app')
 
-  // The macOS About window (Plexo › About Plexo); its copyright comes from electron-builder.yml.
+  // The macOS About window (NetFuse › About NetFuse); its copyright comes from electron-builder.yml.
   app.setAboutPanelOptions({
-    credits: 'Developed by Anmol Kapil.\nmacOS code signing provided by Dhananjay Bhosale.'
+    credits: 'Built on Plexo by Anmol Kapil (MIT licence).'
   })
 
   // Applied before the window is created so the initial background/icon already match —

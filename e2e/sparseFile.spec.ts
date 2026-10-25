@@ -7,7 +7,7 @@ import { markSparse } from '../src/main/download/sparseFile'
 
 test('an install file on NTFS is sparse, so a write far into it zeroes nothing first', async () => {
   test.skip(process.platform !== 'win32', 'NTFS only')
-  const dir = await mkdtemp(join(tmpdir(), 'plexo-sparse-'))
+  const dir = await mkdtemp(join(tmpdir(), 'netfuse-sparse-'))
   try {
     const sparse = join(dir, 'sparse.bin')
     await (await open(sparse, 'wx+')).close()

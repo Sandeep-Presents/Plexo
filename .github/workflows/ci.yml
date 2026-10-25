@@ -92,4 +92,4 @@ jobs:
       - name: Check sparse install files
         run: npx playwright test e2e/sparseFile.spec.ts
         env:
-          PLEXO_E2E_SKIP_BUILD: '1'
+          NETFUSE_E2E_SKIP_BUILD: '1'

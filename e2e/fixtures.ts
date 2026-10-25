@@ -52,7 +52,7 @@ export function electronArgs(entry: string, args: string[] = []): string[] {
  * content servers tell the two networks apart. Found (and checked to work) by global-setup.ts; null
  * where there's no usable one, and the multi-network tests skip.
  */
-export const LAN_ADDRESS = process.env.PLEXO_E2E_LAN || null
+export const LAN_ADDRESS = process.env.NETFUSE_E2E_LAN || null
 
 export const NETWORKS = LAN_ADDRESS
   ? { a: '127.0.0.1', b: LAN_ADDRESS }
@@ -86,11 +86,11 @@ interface Tracked {
 }
 
 /**
- * Drives one Plexo instance through the same `window.plexo` API the renderer uses — nothing
+ * Drives one NetFuse instance through the same `window.netfuse` API the renderer uses — nothing
  * below this reaches into the main process's internals, so refactoring them can't break a test
  * that still describes correct behavior.
  */
-export class PlexoApp {
+export class NetFuseApp {
   electronApp!: ElectronApplication
   page!: Page
   /** Every downloadUpdated state, one array per app launch (a relaunch starts a new one). */
@@ -116,18 +116,18 @@ export class PlexoApp {
           args: electronArgs(PROJECT_ROOT, args),
           env: {
             ...(process.env as Record<string, string>),
-            PLEXO_USER_DATA: this.dirs.userData,
-            PLEXO_E2E_HIDE_WINDOW: '1',
-            PLEXO_E2E_RETRY_BASE_MS: '20',
-            PLEXO_E2E_STALL_MS: '1500',
+            NETFUSE_USER_DATA: this.dirs.userData,
+            NETFUSE_E2E_HIDE_WINDOW: '1',
+            NETFUSE_E2E_RETRY_BASE_MS: '20',
+            NETFUSE_E2E_STALL_MS: '1500',
             // A busy server gives up after its retries alone, as any other wrong answer does,
             // unless a test waits it out on purpose.
-            PLEXO_E2E_SERVER_BUSY_MS: '1',
+            NETFUSE_E2E_SERVER_BUSY_MS: '1',
             // Off unless a test asks for it: a hedge is an extra request, and most tests count them.
-            PLEXO_E2E_HEDGE_MS: '600000',
+            NETFUSE_E2E_HEDGE_MS: '600000',
             // Fixed for the same reason, and for downloads started through the UI.
-            PLEXO_E2E_STREAMS: '2',
-            PLEXO_E2E_INTERFACES: interfacesEnv(NETWORKS),
+            NETFUSE_E2E_STREAMS: '2',
+            NETFUSE_E2E_INTERFACES: interfacesEnv(NETWORKS),
             ...this.extraEnv
           }
         })
@@ -153,7 +153,7 @@ export class PlexoApp {
     this.updates.push(updates)
     // Kept whole, the way the window puts them together: each download from its own last state.
     const latest = new Map<string, DownloadState>()
-    await this.page.exposeFunction('__plexoRecord', (update: DownloadUpdate) => {
+    await this.page.exposeFunction('__netfuseRecord', (update: DownloadUpdate) => {
       updates.push(update)
       const previous = latest.get(update.state.id) ?? null
       const state = applyDownloadUpdate(previous, update)
@@ -163,8 +163,8 @@ export class PlexoApp {
       }
     })
     await this.page.evaluate(() => {
-      const w = window as unknown as { __plexoRecord: (s: unknown) => void }
-      window.plexo.onDownloadUpdated((update) => w.__plexoRecord(update))
+      const w = window as unknown as { __netfuseRecord: (s: unknown) => void }
+      window.netfuse.onDownloadUpdated((update) => w.__netfuseRecord(update))
     })
     return this
   }
@@ -205,7 +205,7 @@ export class PlexoApp {
       (...args: unknown[]) =>
         this.page.evaluate(
           ([method, params]) =>
-            (window.plexo as unknown as Record<string, (...a: unknown[]) => unknown>)[method](
+            (window.netfuse as unknown as Record<string, (...a: unknown[]) => unknown>)[method](
               ...params
             ),
           [name, args] as const
@@ -221,8 +221,8 @@ export class PlexoApp {
   private async pinStreams(connections: number | 'auto' = 2): Promise<void> {
     await this.evaluateMain(
       (_electron, value) => {
-        if (value === null) delete process.env.PLEXO_E2E_STREAMS
-        else process.env.PLEXO_E2E_STREAMS = value
+        if (value === null) delete process.env.NETFUSE_E2E_STREAMS
+        else process.env.NETFUSE_E2E_STREAMS = value
       },
       connections === 'auto' ? null : String(connections)
     )
@@ -230,9 +230,9 @@ export class PlexoApp {
 
   /** Points the app at `steam` for Steam itself, for this launch and the next. */
   async useSteam(steam: SteamOrigin): Promise<void> {
-    this.extraEnv.PLEXO_E2E_STEAM = steam.url
+    this.extraEnv.NETFUSE_E2E_STEAM = steam.url
     await this.evaluateMain((_electron, url) => {
-      process.env.PLEXO_E2E_STEAM = url
+      process.env.NETFUSE_E2E_STEAM = url
     }, steam.url)
   }
 
@@ -520,7 +520,7 @@ async function openFilesUnder(pid: number, roots: string[]): Promise<string[]> {
  * The end-of-test rules: once a download has finished (either way), what's on disk must be
  * exactly right. The one that matters most: `completed` never means wrong bytes.
  */
-export async function checkFinalState(app: PlexoApp): Promise<void> {
+export async function checkFinalState(app: NetFuseApp): Promise<void> {
   const states = await app.all()
   const latest = states.at(-1)
   const checked = states.flatMap((state) => {
@@ -587,19 +587,19 @@ export async function makeDirs(): Promise<{
   dirs: { userData: string; dest: string }
   dispose: () => Promise<void>
 }> {
-  const root = await realpath(await mkdtemp(join(tmpdir(), 'plexo-e2e-')))
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'netfuse-e2e-')))
   const dirs = { userData: join(root, 'userData'), dest: join(root, 'dest') }
   await Promise.all([mkdir(dirs.userData), mkdir(dirs.dest)])
   return { dirs, dispose: () => rm(root, { recursive: true, force: true, maxRetries: 5 }) }
 }
 
 interface Fixtures {
-  /** Extra environment for the app, e.g. `test.use({ appEnv: { PLEXO_E2E_RETRY_BASE_MS: '2000' } })`. */
+  /** Extra environment for the app, e.g. `test.use({ appEnv: { NETFUSE_E2E_RETRY_BASE_MS: '2000' } })`. */
   appEnv: Record<string, string>
   dirs: { userData: string; dest: string }
   /** Starts a fake Steam and points the app at it; stopped after the test. */
   serveSteam: (app?: SteamAppFixture, options?: SteamOriginOptions) => Promise<SteamOrigin>
-  plexo: PlexoApp
+  netfuse: NetFuseApp
   checks: void
 }
 
@@ -613,12 +613,12 @@ export const test = base.extend<Fixtures>({
     await dispose()
   },
 
-  serveSteam: async ({ plexo }, use, testInfo) => {
+  serveSteam: async ({ netfuse }, use, testInfo) => {
     const origins: SteamOrigin[] = []
     await use(async (app, options) => {
       const steam = await new SteamOrigin(app, options).start()
       origins.push(steam)
-      await plexo.useSteam(steam)
+      await netfuse.useSteam(steam)
       return steam
     })
     if (testInfo.status !== testInfo.expectedStatus) {
@@ -628,8 +628,8 @@ export const test = base.extend<Fixtures>({
     await Promise.all(origins.map((origin) => origin.stop()))
   },
 
-  plexo: async ({ dirs, appEnv }, use, testInfo) => {
-    const app = new PlexoApp(dirs, { ...appEnv })
+  netfuse: async ({ dirs, appEnv }, use, testInfo) => {
+    const app = new NetFuseApp(dirs, { ...appEnv })
     await app.launch()
     await use(app)
     if (testInfo.status !== testInfo.expectedStatus) {
@@ -642,16 +642,16 @@ export const test = base.extend<Fixtures>({
   },
 
   checks: [
-    async ({ plexo }, use, testInfo) => {
+    async ({ netfuse }, use, testInfo) => {
       await use()
       // A test already failing (or expected to fail) has said what it needed to.
       if (testInfo.status !== 'passed' || testInfo.expectedStatus !== 'passed') return
-      checkEvents(plexo.sessions)
+      checkEvents(netfuse.sessions)
       // Listeners piling up on one stream or emitter: harmless today, a leak tomorrow.
-      expect(plexo.output.join(''), 'the app warned of a listener leak').not.toContain(
+      expect(netfuse.output.join(''), 'the app warned of a listener leak').not.toContain(
         'MaxListenersExceededWarning'
       )
-      if (plexo.alive) await checkFinalState(plexo)
+      if (netfuse.alive) await checkFinalState(netfuse)
     },
     { auto: true }
   ]

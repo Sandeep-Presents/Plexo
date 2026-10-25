@@ -1,4 +1,4 @@
-// What Steam's result codes (EResult) mean to someone using Plexo. steam-user and steam-session
+// What Steam's result codes (EResult) mean to someone using NetFuse. steam-user and steam-session
 // reject with errors named after the code ("InvalidPassword") and carry the number as `eresult`;
 // this turns the ones a login or a download meets into something to read. Anything else keeps
 // Steam's own name, so it can still be looked up.
@@ -54,7 +54,7 @@ const LOGIN: Record<number, string> = {
   [EResult.InvalidSignature]: 'Your Steam login was refused. Log in again.',
   [EResult.LoggedInElsewhere]: 'This Steam account logged in somewhere else.',
   [EResult.LogonSessionReplaced]: 'This Steam account logged in somewhere else.',
-  [EResult.NoConnection]: 'Plexo couldn’t reach Steam. Check your connection and try again.',
+  [EResult.NoConnection]: 'NetFuse couldn’t reach Steam. Check your connection and try again.',
   [EResult.ServiceUnavailable]: 'Steam isn’t answering right now. Try again in a few minutes.',
   [EResult.Busy]: 'Steam isn’t answering right now. Try again in a few minutes.',
   [EResult.TryAnotherCM]: 'Steam isn’t answering right now. Try again in a few minutes.',

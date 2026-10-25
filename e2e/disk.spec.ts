@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs'
 import { chmod, mkdir, mkdtemp, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { expect, PlexoApp, test } from './fixtures'
+import { expect, NetFuseApp, test } from './fixtures'
 import { SteamOrigin, syntheticApp, type SteamAppFixture } from './steamOrigin'
 
 // The disk: out of space, folders vanishing, no permission. The small volumes are real
@@ -27,7 +27,7 @@ interface Volume {
 async function smallVolume(megabytes: number): Promise<Volume | null> {
   try {
     if (process.platform === 'darwin') {
-      const name = `plexoe2e${process.pid}${Date.now() % 100000}`
+      const name = `netfusee2e${process.pid}${Date.now() % 100000}`
       const device = execFileSync('hdiutil', ['attach', '-nomount', `ram://${megabytes * 2048}`])
         .toString()
         .trim()
@@ -40,7 +40,7 @@ async function smallVolume(megabytes: number): Promise<Volume | null> {
       }
     }
     if (process.platform === 'linux') {
-      const path = await mkdtemp(join(tmpdir(), 'plexo-vol-'))
+      const path = await mkdtemp(join(tmpdir(), 'netfuse-vol-'))
       execFileSync('sudo', [
         '-n',
         'mount',
@@ -68,7 +68,7 @@ async function smallVolume(megabytes: number): Promise<Volume | null> {
 
 test.describe('disk space @disk', () => {
   test('a Steam game bigger than the free space is refused before anything is written', async ({
-    plexo,
+    netfuse,
     serveSteam,
     dirs
   }) => {
@@ -78,14 +78,14 @@ test.describe('disk space @disk', () => {
       const dest = join(volume!.path, 'dest')
       await mkdir(dest)
       const steam = await serveSteam(bigGame())
-      await expect(plexo.startSteam(steam, { destinationDir: dest })).rejects.toThrow(
+      await expect(netfuse.startSteam(steam, { destinationDir: dest })).rejects.toThrow(
         /Not enough disk space/
       )
       expect(await readdir(dest)).toEqual([])
       const downloads = join(dirs.userData, 'downloads')
       expect(existsSync(downloads) ? await readdir(downloads) : []).toEqual([])
     } finally {
-      await plexo.quit()
+      await netfuse.quit()
       await volume!.dispose()
     }
   })
@@ -95,7 +95,7 @@ test.describe('disk space @disk', () => {
     test.skip(!volume, 'cannot create a small volume on this machine')
     // Both metadata and destination are on the small volume; the game must occupy only one copy.
     // Room is left for Chromium's own caches in userData, which take several MB at launch.
-    const app = new PlexoApp({
+    const app = new NetFuseApp({
       userData: join(volume!.path, 'userData'),
       dest: join(volume!.path, 'dest')
     })
@@ -120,23 +120,23 @@ test.describe('destination folder problems @smoke', () => {
   // Files written so far go with the folder: the install can't be called done, and nothing of it
   // may be left once it is removed.
   test('destination folder deleted mid-download → error, nothing left', async ({
-    plexo,
+    netfuse,
     serveSteam,
     dirs
   }) => {
     const steam = await serveSteam(syntheticApp(51, 3))
     let seen = 0
     const reached = steam.hold((request) => request.kind === 'chunk' && ++seen > 6)
-    await plexo.startSteam(steam)
+    await netfuse.startSteam(steam)
     await reached
     await rm(dirs.dest, { recursive: true, force: true })
     steam.release()
-    const state = await plexo.waitForStatus(['completed', 'error'])
+    const state = await netfuse.waitForStatus(['completed', 'error'])
     expect(state.status).toBe('error')
   })
 
   test('read-only destination folder → refused, and nothing left in userData', async ({
-    plexo,
+    netfuse,
     serveSteam,
     dirs
   }) => {
@@ -144,7 +144,7 @@ test.describe('destination folder problems @smoke', () => {
     const steam = await serveSteam()
     await chmod(dirs.dest, 0o555)
     try {
-      await expect(plexo.startSteam(steam)).rejects.toThrow(/EACCES|permission/i)
+      await expect(netfuse.startSteam(steam)).rejects.toThrow(/EACCES|permission/i)
       const downloads = join(dirs.userData, 'downloads')
       expect(
         existsSync(downloads) ? await readdir(downloads) : [],

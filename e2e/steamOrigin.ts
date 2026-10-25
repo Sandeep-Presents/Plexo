@@ -16,13 +16,13 @@ import {
  * Steam, as the e2e tests stand it up: the control plane steam/fakeBackend.ts talks to (login,
  * licenses, appinfo, depot keys, request codes, content servers, CDN tokens), and content servers
  * that send depot manifests and chunks built the way Steam's own tools build them. A Steam
- * download runs against it from login to the last chunk, over Plexo's own pinned connections.
+ * download runs against it from login to the last chunk, over NetFuse's own pinned connections.
  *
  * Each content server can be told to misbehave per request, and to hold a response until the
  * test lets it go.
  */
 
-export const ACCOUNT = { name: 'plexo_tester', password: 'correct horse battery staple' }
+export const ACCOUNT = { name: 'netfuse_tester', password: 'correct horse battery staple' }
 export const GUARD_CODE = 'K7PQ2'
 
 /** What a content server does with one request. */
@@ -98,12 +98,12 @@ export function syntheticApp(seed = 1, scale = 1): SteamAppFixture {
   ])
   return {
     appId: 4000,
-    name: 'Plexo Test Game',
-    installDir: 'Plexo Test Game',
+    name: 'NetFuse Test Game',
+    installDir: 'NetFuse Test Game',
     depots: [
       {
         depotId: 4001,
-        name: 'Plexo Test Game Content',
+        name: 'NetFuse Test Game Content',
         manifestId: '7000000000000000001',
         key: keyFor(seed, 1),
         owned: true,
@@ -119,7 +119,7 @@ export function syntheticApp(seed = 1, scale = 1): SteamAppFixture {
       },
       {
         depotId: 4002,
-        name: 'Plexo Test Game Extras',
+        name: 'NetFuse Test Game Extras',
         manifestId: '7000000000000000002',
         key: keyFor(seed, 2),
         owned: true,
@@ -130,7 +130,7 @@ export function syntheticApp(seed = 1, scale = 1): SteamAppFixture {
       },
       {
         depotId: 4003,
-        name: 'Plexo Test Game Soundtrack',
+        name: 'NetFuse Test Game Soundtrack',
         manifestId: '7000000000000000003',
         key: keyFor(seed, 3),
         owned: false,
@@ -138,7 +138,7 @@ export function syntheticApp(seed = 1, scale = 1): SteamAppFixture {
       },
       {
         depotId: 4004,
-        name: 'Plexo Test Game DLC',
+        name: 'NetFuse Test Game DLC',
         manifestId: '7000000000000000004',
         key: keyFor(seed, 4),
         owned: true,
@@ -326,7 +326,7 @@ export class SteamOrigin {
     )
   }
 
-  /** Where fakeBackend reaches the control plane (PLEXO_E2E_STEAM). */
+  /** Where fakeBackend reaches the control plane (NETFUSE_E2E_STEAM). */
   get url(): string {
     return `http://127.0.0.1:${this.controlPort}`
   }

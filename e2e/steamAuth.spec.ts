@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs'
 import { readdir, readFile, stat } from 'node:fs/promises'
 import { join } from 'node:path'
-import { expect, test, type PlexoApp } from './fixtures'
+import { expect, test, type NetFuseApp } from './fixtures'
 import { ACCOUNT, GUARD_CODE, type SteamOrigin } from './steamOrigin'
 
 // The Steam login's secrets — the password, the Steam Guard code, the refresh token Steam hands
@@ -12,8 +12,8 @@ import { ACCOUNT, GUARD_CODE, type SteamOrigin } from './steamOrigin'
 
 /** Records, in the main process, everything sent to the window: pushed events, and what every
  * request from it is answered with. */
-async function recordWindowTraffic(plexo: PlexoApp): Promise<void> {
-  const wrapped = await plexo.evaluateMain(({ BrowserWindow, ipcMain }) => {
+async function recordWindowTraffic(netfuse: NetFuseApp): Promise<void> {
+  const wrapped = await netfuse.evaluateMain(({ BrowserWindow, ipcMain }) => {
     const sent: string[] = []
     ;(globalThis as Record<string, unknown>).__sentToWindow = sent
     for (const window of BrowserWindow.getAllWindows()) {
@@ -40,8 +40,11 @@ async function recordWindowTraffic(plexo: PlexoApp): Promise<void> {
   expect(wrapped, 'every request handler is recorded').toBeGreaterThan(10)
 }
 
-const sentToWindow = (plexo: PlexoApp): Promise<string[]> =>
-  plexo.evaluateMain(() => (globalThis as Record<string, unknown>).__sentToWindow as string[], null)
+const sentToWindow = (netfuse: NetFuseApp): Promise<string[]> =>
+  netfuse.evaluateMain(
+    () => (globalThis as Record<string, unknown>).__sentToWindow as string[],
+    null
+  )
 
 async function filesUnder(root: string): Promise<string[]> {
   const entries = await readdir(root, { recursive: true, withFileTypes: true })
@@ -74,33 +77,35 @@ function encodings(steam: SteamOrigin): { name: string; bytes: Buffer }[] {
 
 test.describe('steam credentials', () => {
   test('no secret reaches the window, the output or a file @smoke', async ({
-    plexo,
+    netfuse,
     serveSteam,
     dirs
   }) => {
     const steam = await serveSteam(undefined, { guard: 'email', requireToken: true })
-    await recordWindowTraffic(plexo)
+    await recordWindowTraffic(netfuse)
 
-    const before = await plexo.api.steamLoginState()
+    const before = await netfuse.api.steamLoginState()
     expect(before.status).toBe('logged-out')
     const canRemember = before.status === 'logged-out' && before.canRemember
-    await plexo.api.steamLogin({
+    await netfuse.api.steamLogin({
       method: 'credentials',
       accountName: ACCOUNT.name,
       password: ACCOUNT.password,
       remember: true
     })
-    await expect.poll(async () => (await plexo.api.steamLoginState()).status).toBe('awaiting-code')
-    await plexo.api.steamSubmitCode('WRONG')
+    await expect
+      .poll(async () => (await netfuse.api.steamLoginState()).status)
+      .toBe('awaiting-code')
+    await netfuse.api.steamSubmitCode('WRONG')
     await expect
       .poll(async () => {
-        const state = await plexo.api.steamLoginState()
+        const state = await netfuse.api.steamLoginState()
         return state.status === 'awaiting-code' ? state.error : undefined
       })
       .toBe('That Steam Guard code isn’t right. Check it and try again.')
-    await plexo.api.steamSubmitCode(GUARD_CODE.toLowerCase())
-    await expect.poll(async () => (await plexo.api.steamLoginState()).status).toBe('logged-in')
-    const loggedIn = await plexo.api.steamLoginState()
+    await netfuse.api.steamSubmitCode(GUARD_CODE.toLowerCase())
+    await expect.poll(async () => (await netfuse.api.steamLoginState()).status).toBe('logged-in')
+    const loggedIn = await netfuse.api.steamLoginState()
     expect(loggedIn).toEqual({
       status: 'logged-in',
       accountName: ACCOUNT.name,
@@ -109,8 +114,8 @@ test.describe('steam credentials', () => {
 
     // A whole download, with CDN tokens and request codes, and Steam's errors along the way.
     steam.setRule((request) => (request.n === 3 ? { status: 403 } : undefined))
-    await plexo.startSteam(steam)
-    await plexo.waitForSteamStatus('completed')
+    await netfuse.startSteam(steam)
+    await netfuse.waitForSteamStatus('completed')
     expect(steam.refreshTokens.length).toBeGreaterThan(0)
     expect(steam.grants.length).toBeGreaterThan(0)
 
@@ -119,12 +124,12 @@ test.describe('steam credentials', () => {
     expect(existsSync(stored)).toBe(canRemember)
 
     const secrets = encodings(steam)
-    const traffic = (await sentToWindow(plexo)).join('\n')
+    const traffic = (await sentToWindow(netfuse)).join('\n')
     expect(traffic).toContain('steam:login-state-changed')
     for (const { name, bytes } of secrets) {
       expect(Buffer.from(traffic).includes(bytes), `the window never gets the ${name}`).toBe(false)
     }
-    const output = Buffer.from(plexo.output.join(''))
+    const output = Buffer.from(netfuse.output.join(''))
     for (const { name, bytes } of [
       ...secrets,
       { name: 'Steam Guard code', bytes: Buffer.from(GUARD_CODE) }
@@ -139,18 +144,18 @@ test.describe('steam credentials', () => {
       }
     }
 
-    await plexo.api.steamLogout()
-    expect((await plexo.api.steamLoginState()).status).toBe('logged-out')
+    await netfuse.api.steamLogout()
+    expect((await netfuse.api.steamLoginState()).status).toBe('logged-out')
     expect(existsSync(stored), 'logging out forgets the stored login').toBe(false)
   })
 
   test('a wrong password is said plainly, and nothing is kept @smoke', async ({
-    plexo,
+    netfuse,
     serveSteam,
     dirs
   }) => {
     await serveSteam()
-    await plexo.api.steamLogin({
+    await netfuse.api.steamLogin({
       method: 'credentials',
       accountName: ACCOUNT.name,
       password: 'not the password',
@@ -158,42 +163,42 @@ test.describe('steam credentials', () => {
     })
     await expect
       .poll(async () => {
-        const state = await plexo.api.steamLoginState()
+        const state = await netfuse.api.steamLoginState()
         return state.status === 'logged-out' ? (state.error ?? 'no message') : state.status
       })
       .toBe('The account name or password is wrong.')
     expect(existsSync(join(dirs.userData, 'steam-account.json'))).toBe(false)
-    expect(plexo.output.join('')).not.toContain('not the password')
+    expect(netfuse.output.join('')).not.toContain('not the password')
   })
 
   test('the window’s Steam requests are checked before anything is done with them', async ({
-    plexo,
+    netfuse,
     serveSteam
   }) => {
     await serveSteam()
     const bad = [
       () =>
-        plexo.api.steamLogin({
+        netfuse.api.steamLogin({
           method: 'credentials',
           accountName: '',
           password: 'x',
           remember: false
         }),
-      () => plexo.api.steamLogin({ method: 'magic' } as never),
-      () => plexo.api.steamSubmitCode('<script>' as never),
-      () => plexo.api.steamAppDetails(-1),
-      () => plexo.api.steamAppDetails('480' as never),
+      () => netfuse.api.steamLogin({ method: 'magic' } as never),
+      () => netfuse.api.steamSubmitCode('<script>' as never),
+      () => netfuse.api.steamAppDetails(-1),
+      () => netfuse.api.steamAppDetails('480' as never),
       () =>
-        plexo.api.steamPrepare({
+        netfuse.api.steamPrepare({
           appId: 4000,
           branch: 'public',
           depotIds: ['4001'] as never,
-          destinationDir: plexo.dirs.dest,
+          destinationDir: netfuse.dirs.dest,
           adopt: false
         }),
-      () => plexo.api.startDownload({ kind: 'steam', planId: 'x', interfaceIds: 'a' as never }),
+      () => netfuse.api.startDownload({ kind: 'steam', planId: 'x', interfaceIds: 'a' as never }),
       () =>
-        plexo.api.startDownload({
+        netfuse.api.startDownload({
           kind: 'steam',
           planId: 'x',
           interfaceIds: ['a'],
@@ -201,6 +206,6 @@ test.describe('steam credentials', () => {
         })
     ]
     for (const call of bad) await expect(call()).rejects.toThrow()
-    expect((await plexo.api.steamLoginState()).status).toBe('logged-out')
+    expect((await netfuse.api.steamLoginState()).status).toBe('logged-out')
   })
 })

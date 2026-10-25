@@ -85,7 +85,7 @@ function AccountMenu(): React.JSX.Element | null {
         <ChevronsUpDown aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
       </DropdownMenuTrigger>
       <DropdownMenuContent side="top" align="start" className="min-w-48">
-        <DropdownMenuItem onClick={() => void window.plexo.steamLogout().catch(() => {})}>
+        <DropdownMenuItem onClick={() => void window.netfuse.steamLogout().catch(() => {})}>
           <LogOut />
           Log out of Steam
         </DropdownMenuItem>
@@ -138,6 +138,7 @@ export function Sidebar(): React.JSX.Element {
       <div className="flex flex-col gap-2 border-t-[0.5px] border-border p-2">
         <div className="flex items-center gap-1.5">
           <NetworksMenu
+            showSpeed={false}
             className="min-w-0 flex-1 justify-start"
             onOpenLimits={(page) => setLimits({ open: true, page, schedule: false })}
           />

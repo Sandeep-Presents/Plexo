@@ -6,7 +6,7 @@ import { crc32, deflateRawSync, zstdCompressSync } from 'node:zlib'
 
 // Steam depot content built from scratch, the way Steam's own tools lay it out (as steam-user
 // reads it): chunks compressed three ways and encrypted with a depot key, and zipped protobuf
-// manifests listing files and their chunks. The unit specs check Plexo's decoders against it, and
+// manifests listing files and their chunks. The unit specs check NetFuse's decoders against it, and
 // the Steam test server (steamOrigin.ts) serves it.
 
 export type Compression = 'lzma' | 'zstd' | 'zip'

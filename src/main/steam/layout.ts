@@ -73,11 +73,11 @@ function keyOf(name: string, platform: NodeJS.Platform): string {
 
 function checkSegment(segment: string, whole: string, platform: NodeJS.Platform): void {
   if (!segment || segment === '.' || segment === '..') {
-    throw new UnsafeLayoutError(`This game has a file Plexo can't save safely: ${whole}`)
+    throw new UnsafeLayoutError(`This game has a file NetFuse can't save safely: ${whole}`)
   }
   if (CONTROL.test(segment)) {
     throw new UnsafeLayoutError(
-      `This game has a file name Plexo can't save: ${JSON.stringify(whole)}`
+      `This game has a file name NetFuse can't save: ${JSON.stringify(whole)}`
     )
   }
   if (Buffer.byteLength(segment) > MAX_NAME_BYTES) {

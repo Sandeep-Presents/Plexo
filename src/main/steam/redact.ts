@@ -1,5 +1,5 @@
 // Steam's secrets — refresh and access tokens (JWTs), CDN auth tokens, depot keys, manifest request
-// codes — travel inside URLs and error messages from the libraries Plexo uses. Anything that leaves
+// codes — travel inside URLs and error messages from the libraries NetFuse uses. Anything that leaves
 // the Steam modules (a download's error, a notification, the window, the console) goes through
 // redact() first, so a secret can't reach a screen, a log or a saved file by way of an error.
 
@@ -19,7 +19,7 @@ const RULES: [RegExp, (match: string, ...groups: string[]) => string][] = [
   [/\b[0-9a-f]{40,}\b/gi, () => REDACTED]
 ]
 
-/** `text` with every secret Plexo knows the shape of replaced. */
+/** `text` with every secret NetFuse knows the shape of replaced. */
 export function redact(text: string): string {
   return RULES.reduce((result, [pattern, replace]) => result.replace(pattern, replace), text)
 }

@@ -104,8 +104,8 @@ interface RunContext {
   tokens: TokenCache
 }
 
-const debug: (...args: unknown[]) => void = process.env['PLEXO_DEBUG']
-  ? (...args) => console.debug('[plexo steam]', ...args)
+const debug: (...args: unknown[]) => void = process.env['NETFUSE_DEBUG']
+  ? (...args) => console.debug('[netfuse steam]', ...args)
   : () => {}
 
 /** How long a run waits for the Steam login (the stored one, after a restart) before giving up. */
