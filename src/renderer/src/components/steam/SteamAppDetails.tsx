@@ -2,6 +2,7 @@ import type {
   SteamAppDetails as Details,
   SteamArch,
   SteamDepot,
+  SteamLibraryFolder,
   SteamOs,
   SteamPlan,
   SteamPrepareProgress,
@@ -31,6 +32,7 @@ import {
   DropdownMenuTrigger
 } from '../ui/dropdown-menu'
 import { ToggleGroup, ToggleGroupItem } from '../ui/toggle-group'
+import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip'
 import { FamilySharing } from './SteamLibrary'
 
 // One owned app, and what of it to download: the branch, the system, architecture and language
@@ -50,6 +52,13 @@ type Load =
   | { status: 'loading' }
   | { status: 'ready'; details: Details }
   | { status: 'error'; message: string }
+
+/** Looking for the Steam client's libraries, for a game to go where Steam keeps its own. */
+type Detect =
+  | { status: 'idle' }
+  | { status: 'looking' }
+  | { status: 'none' }
+  | { status: 'choose'; libraries: SteamLibraryFolder[] }
 
 type Start =
   | { status: 'idle' }
@@ -115,8 +124,9 @@ function Choices({
 }): React.JSX.Element {
   const interfaces = useAppStore((store) => store.interfaces)
   const homeDir = useAppStore((store) => store.homeDir)
-  const destinationDir = useAppStore((store) => store.destinationDir)
-  const setDestinationDir = useAppStore((store) => store.setDestinationDir)
+  // Its own, apart from New download's: a Steam library is no place for other downloads.
+  const destinationDir = useAppStore((store) => store.steamDestinationDir)
+  const setDestinationDir = useAppStore((store) => store.setSteamDestinationDir)
   const networkPreferences = useAppStore((store) => store.networkPreferences)
   const full = useAppStore(
     (store) =>
@@ -144,6 +154,10 @@ function Choices({
   )
   const [start, setStart] = useState<Start>({ status: 'idle' })
   const [error, setError] = useState<string | null>(null)
+  const [detect, setDetect] = useState<Detect>({ status: 'idle' })
+  /** The libraries last found, to tell when the folder is one of them. */
+  const [libraries, setLibraries] = useState<SteamLibraryFolder[]>([])
+  const folderName = details.installDir || details.name
 
   useEffect(() => {
     let stale = false
@@ -235,6 +249,28 @@ function Choices({
     }
   }
 
+  /** A library that already has the game is installed over, so that only what's missing or
+   * different is fetched, rather than into a second copy beside it. */
+  const pickLibrary = (library: SteamLibraryFolder): void => {
+    setDestinationDir(library.path)
+    setAdopt(library.hasGame)
+    setDetect({ status: 'idle' })
+  }
+
+  const autoDetect = async (): Promise<void> => {
+    setDetect({ status: 'looking' })
+    try {
+      const found = await window.plexo.steamLibraryFolders(folderName)
+      setLibraries(found)
+      if (found.length === 0) setDetect({ status: 'none' })
+      else if (found.length === 1) pickLibrary(found[0])
+      else setDetect({ status: 'choose', libraries: found })
+    } catch {
+      setDetect({ status: 'none' })
+    }
+  }
+
+  const inLibrary = libraries.find((library) => library.path === destinationDir)
   const branch = details.branches.find((entry) => entry.name === selection.branch)
 
   return (
@@ -340,6 +376,24 @@ function Choices({
           <div className="min-w-0 flex-1 truncate font-mono text-[12.5px]">
             {toDisplayPath(destinationDir, homeDir)}
           </div>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  disabled={busy || detect.status === 'looking'}
+                  onClick={() => void autoDetect()}
+                >
+                  {detect.status === 'looking' ? 'Looking' : 'Auto-detect'}
+                </Button>
+              }
+            />
+            <TooltipContent>
+              Find the Steam library’s games folder (steamapps/common)
+            </TooltipContent>
+          </Tooltip>
           <Button
             type="button"
             variant="secondary"
@@ -347,12 +401,57 @@ function Choices({
             disabled={busy}
             onClick={async () => {
               const folder = await window.plexo.chooseDestinationFolder(destinationDir)
-              if (folder) setDestinationDir(folder)
+              if (folder) {
+                setDestinationDir(folder)
+                setDetect({ status: 'idle' })
+              }
             }}
           >
             Change
           </Button>
         </div>
+        {detect.status === 'none' && (
+          <div className="text-[12px] text-muted-foreground">
+            Plexo couldn’t find Steam on this computer. Choose the folder with Change.
+          </div>
+        )}
+        {detect.status === 'choose' && (
+          <div
+            role="group"
+            aria-label="Steam libraries"
+            className="flex flex-col rounded-lg border-[0.5px] border-border"
+          >
+            {detect.libraries.map((library) => (
+              <button
+                key={library.path}
+                type="button"
+                onClick={() => pickLibrary(library)}
+                className="flex cursor-default items-center gap-2 border-b-[0.5px] border-border px-3 py-2 text-left text-[12.5px] last:border-b-0 hover:bg-secondary"
+              >
+                <span className="min-w-0 flex-1 truncate font-mono">
+                  {toDisplayPath(library.path, homeDir)}
+                </span>
+                {library.hasGame && (
+                  <span className="text-[11px] text-[var(--text-secondary)]">Has this game</span>
+                )}
+                {library.freeBytes !== null && (
+                  <span className="font-mono text-[11px] text-muted-foreground tabular-nums">
+                    {formatBytes(library.freeBytes)} free
+                  </span>
+                )}
+              </button>
+            ))}
+          </div>
+        )}
+        {inLibrary && (
+          <div className="text-[12px] leading-snug text-muted-foreground">
+            {inLibrary.hasGame && adopt
+              ? `“${folderName}” is already in this Steam library: only what’s missing or different will be fetched. `
+              : 'This is a Steam library. '}
+            Steam lists the game once you click Install on it in Steam, which finds these files and
+            checks them rather than downloading them again.
+          </div>
+        )}
         <label className="flex items-start gap-2 text-[12.5px]">
           <Checkbox
             checked={adopt}
@@ -361,7 +460,7 @@ function Choices({
             className="mt-0.5"
           />
           <span>
-            Install over the existing “{details.installDir || details.name}” folder
+            Install over the existing “{folderName}” folder
             <span className="block text-muted-foreground">
               Files already there and correct are kept: only what’s missing or different is fetched.
               Nothing else in the folder is touched.

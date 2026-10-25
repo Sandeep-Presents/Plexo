@@ -124,6 +124,16 @@ export interface SteamPrepareRequest {
   adopt: boolean
 }
 
+/** A Steam library on this computer, as a folder to save a game to. */
+export interface SteamLibraryFolder {
+  /** Where the library keeps its games: <library>/steamapps/common. */
+  path: string
+  /** Free on its drive; null when it can't be told. */
+  freeBytes: number | null
+  /** The game asked about is already in it, in the folder Steam would use. */
+  hasGame: boolean
+}
+
 /** A download worked out and ready to start: startDownload takes its id. */
 export interface SteamPlan {
   planId: string

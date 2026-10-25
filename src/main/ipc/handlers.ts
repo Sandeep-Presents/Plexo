@@ -23,6 +23,7 @@ import { DownloadManager } from '../download/downloadManager'
 import { MAX_STREAMS_PER_NETWORK } from '../download/plan'
 import { canRemember } from '../steam/account'
 import { redactedMessage } from '../steam/redact'
+import { findLibraryFolders } from '../steam/steamFolders'
 import { getDefaultDownloadsDir, getHomeDir } from '../download/paths'
 import { listHistory } from '../download/history'
 import { probeUrl } from '../download/probe'
@@ -196,18 +197,22 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
   ipcMain.on(IpcChannels.getInitialState, async (event) => {
     try {
       const settings = await loadSettings()
-      const { destinationDir } = settings
+      const { destinationDir, steamDestinationDir } = settings
       // Capped: a folder on a dropped network share can take many seconds to answer, and launch
       // waits on this reply — past the cap it's treated as gone and Downloads is used instead.
-      const destinationExists =
-        destinationDir !== undefined &&
+      const exists = async (dir: string | undefined): Promise<boolean> =>
+        dir !== undefined &&
         (await Promise.race([
-          stat(destinationDir).then(
+          stat(dir).then(
             (stats) => stats.isDirectory(),
             () => false
           ),
           new Promise<boolean>((resolve) => setTimeout(resolve, DESTINATION_CHECK_MS, false))
         ]))
+      const [destinationExists, steamDestinationExists] = await Promise.all([
+        exists(destinationDir),
+        exists(steamDestinationDir)
+      ])
       event.returnValue = {
         downloadSchedule: settings.downloadSchedule,
         homeDir: getHomeDir(),
@@ -219,7 +224,8 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
         slowMode: settings.slowMode ?? false,
         slowModeSpeed: settings.slowModeSpeed ?? DEFAULT_SLOW_MODE_SPEED,
         speedUnit: settings.speedUnit ?? 'bytes',
-        destinationDir: destinationExists ? destinationDir : undefined
+        destinationDir: destinationExists ? destinationDir : undefined,
+        steamDestinationDir: steamDestinationExists ? steamDestinationDir : undefined
       } satisfies InitialState
     } catch (error) {
       console.error('[plexo] failed to read initial state', error)
@@ -366,6 +372,12 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
   handle('steamPrepare', async (_event, request) =>
     redacting(() => planner.prepare(checkPrepareRequest(request)))
   )
+  handle('steamLibraryFolders', async (_event, installDir) => {
+    if (installDir !== undefined && !isText(installDir, 255)) {
+      throw new Error('Choose a game from your library.')
+    }
+    return findLibraryFolders(installDir)
+  })
 
   return manager
 }

@@ -345,7 +345,11 @@ Every handler checks its arguments at runtime: integers, string lengths, branch 
   - Search box over owned apps, with a windowed list.
 - **App step:**
   - Branch, then OS, architecture and language filters, then a depot checklist with the defaults pre-ticked. DLC and shared depots are labelled.
-  - Download and install sizes, free space, a "Save to" folder with Change.
+  - Download and install sizes, free space, a "Save to" folder with Change and Auto-detect.
+    - Auto-detect finds the Steam client (the registry and Program Files on Windows, the usual folders on macOS and Linux, Flatpak and Snap included) and reads its `libraryfolders.vdf` (`steam/libraryFolders.ts`, pure). It offers each library's `steamapps/common`, those that already have the game first.
+    - Picking one that has the game ticks "install over the existing folder", so only what's missing or different is fetched.
+    - The Steam dialog's folder is saved apart from New download's (`steamDestinationDir`).
+    - Steam itself lists the game once Install is clicked on it in Steam, which finds the files; writing Steam's `appmanifest` is Phase 4.
   - An option to install over an existing folder (verify and repair).
   - Network chips: a small copy of NewDownloadDialog's, since extracting them would have changed that dialog (its single-stream rules don't apply to Steam).
   - "Fetching file lists: 2 of 3 depots" progress, then the download starts and its downloading screen opens. The plan's warnings (long Windows paths, symlinks on Windows) are shown first, with "Download anyway".

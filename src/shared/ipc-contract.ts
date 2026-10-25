@@ -1,5 +1,6 @@
 import type {
   SteamAppDetails,
+  SteamLibraryFolder,
   SteamLoginRequest,
   SteamLoginState,
   SteamOwnedApp,
@@ -90,4 +91,7 @@ export interface IpcContract {
   /** Works out a download (its manifests fetched, an existing folder checked): startDownload
    * takes the plan's id. */
   steamPrepare: { args: [request: SteamPrepareRequest]; result: SteamPlan }
+  /** The Steam client's libraries on this computer, with whether `installDir` is in each. Reads
+   * local files only. */
+  steamLibraryFolders: { args: [installDir?: string]; result: SteamLibraryFolder[] }
 }

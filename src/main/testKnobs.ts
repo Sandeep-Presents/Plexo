@@ -46,6 +46,14 @@ export function testSteamFake(): string | undefined {
   return process.env['PLEXO_E2E_STEAM'] || undefined
 }
 
+/** `PLEXO_E2E_STEAM_ROOT=/tmp/x/Steam` is the only place Plexo looks for the Steam client's
+ * folder (see steam/steamFolders.ts), so a test can stand up a Steam library of its own. Read on
+ * every call, like the others below. */
+export function testSteamRoot(): string | undefined {
+  if (app.isPackaged) return undefined
+  return process.env['PLEXO_E2E_STEAM_ROOT']
+}
+
 /** `PLEXO_E2E_STREAMS=2` fixes how many streams each network runs and turns the automatic
  * sizing off, so a test can count requests. Read on every call rather than once, so a test can
  * change it between downloads. */

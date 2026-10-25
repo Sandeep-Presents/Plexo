@@ -74,6 +74,10 @@ function sanitizeSettings(parsed: unknown): AppSettings {
   if (typeof destinationDir === 'string' && isAbsolute(destinationDir)) {
     settings.destinationDir = destinationDir
   }
+  const { steamDestinationDir } = parsed
+  if (typeof steamDestinationDir === 'string' && isAbsolute(steamDestinationDir)) {
+    settings.steamDestinationDir = steamDestinationDir
+  }
   // Clamped rather than dropped: a count saved under an older, higher limit keeps the most allowed.
   if (Number.isInteger(downloadsAtOnce) && (downloadsAtOnce as number) >= DOWNLOADS_AT_ONCE.min) {
     settings.downloadsAtOnce = Math.min(downloadsAtOnce as number, DOWNLOADS_AT_ONCE.max)

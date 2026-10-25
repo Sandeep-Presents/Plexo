@@ -412,6 +412,9 @@ export interface AppSettings {
   autoUpdate?: boolean
   /** The last destination folder picked. */
   destinationDir?: string
+  /** The last folder picked in the Steam dialog, apart from destinationDir: games often go in a
+   * Steam library, where nothing else belongs. */
+  steamDestinationDir?: string
   /** User customizations (name/color) per network interface id. */
   networkPreferences?: NetworkPreferences
   /** How many downloads run at once; the rest wait in the queue. */
@@ -450,6 +453,8 @@ export interface InitialState {
   speedUnit: SpeedUnit
   /** The last folder picked, if it still exists — otherwise the renderer uses downloadsDir. */
   destinationDir?: string
+  /** The same, for the Steam dialog. */
+  steamDestinationDir?: string
 }
 
 interface StartDownloadRequestBase {

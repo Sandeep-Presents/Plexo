@@ -1,3 +1,5 @@
+import { mkdir, readdir, readFile, realpath, writeFile } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
 import { expect, test, type PlexoApp } from './fixtures'
 import { ACCOUNT, GUARD_CODE } from './steamOrigin'
 
@@ -96,6 +98,87 @@ test.describe('the Steam dialog', () => {
     await plexo.loginSteam()
     await page.getByRole('button', { name: 'Retry' }).click()
     await plexo.waitForSteamStatus('completed')
+  })
+
+  test('Auto-detect finds the Steam libraries, and installs into the one that has the game', async ({
+    plexo,
+    serveSteam,
+    dirs
+  }) => {
+    const steam = await serveSteam()
+    // A Steam client with two libraries; the second already has part of the game.
+    const root = join(dirname(dirs.dest), 'Steam')
+    const other = join(dirname(dirs.dest), 'SteamLibrary')
+    const game = join(other, 'steamapps', 'common', 'Plexo Test Game')
+    await mkdir(join(root, 'steamapps', 'common'), { recursive: true })
+    await mkdir(join(game, 'bin'), { recursive: true })
+    const binGame = steam.app.depots[0].files.find((file) => file.name === 'bin/game')!.data!
+    await writeFile(join(game, 'bin', 'game'), binGame)
+    const vdfPath = (path: string): string => path.replaceAll('\\', '\\\\')
+    await writeFile(
+      join(root, 'steamapps', 'libraryfolders.vdf'),
+      `"libraryfolders"\n{\n\t"0"\n\t{\n\t\t"path"\t\t"${vdfPath(root)}"\n\t}\n\t"1"\n\t{\n\t\t"path"\t\t"${vdfPath(other)}"\n\t}\n}\n`
+    )
+    await plexo.evaluateMain((_electron, value) => {
+      process.env.PLEXO_E2E_STEAM_ROOT = value
+    }, root)
+
+    await plexo.loginSteam()
+    const page = plexo.page
+    await page.getByRole('button', { name: 'Steam', exact: true }).click()
+    const dialog = page.getByRole('dialog', { name: 'Steam' })
+    await dialog.getByRole('button', { name: 'Plexo Test Game' }).click()
+    await dialog.getByRole('button', { name: 'Auto-detect' }).click()
+
+    const libraries = dialog.getByRole('group', { name: 'Steam libraries' }).getByRole('button')
+    await expect(libraries).toHaveCount(2)
+    // The one that has the game comes first.
+    await expect(libraries.first()).toContainText('Has this game')
+    await expect(libraries.nth(1)).not.toContainText('Has this game')
+    await libraries.first().click()
+    await expect(dialog.getByRole('checkbox', { name: /^Install over the existing/ })).toBeChecked()
+    await expect(dialog.getByText(/is already in this Steam library/)).toBeVisible()
+
+    const common = await realpath(join(other, 'steamapps', 'common'))
+    plexo.nextDownload = {
+      expectedSha: steam.expectedSha(),
+      destBefore: await readdir(common),
+      destinationDir: common
+    }
+    await dialog.getByRole('button', { name: 'Download' }).click()
+    const done = await plexo.waitForSteamStatus('completed')
+    expect(done.destinationPath).toBe(join(common, 'Plexo Test Game'))
+    expect(done.adopted).toBe(true)
+    // What was there already was kept, not fetched again.
+    expect(steam.chunkRequests().length).toBeLessThan(steam.uniqueChunks().length)
+    // The folder is the Steam dialog's own: New download's stays where it was.
+    const settings = async (): Promise<Record<string, unknown>> =>
+      JSON.parse(await readFile(join(dirs.userData, 'app-settings.json'), 'utf8'))
+    await expect.poll(async () => (await settings()).steamDestinationDir).toBe(common)
+    expect((await settings()).destinationDir).not.toBe(common)
+  })
+
+  test('Auto-detect says so when Steam isn’t on this computer', async ({
+    plexo,
+    serveSteam,
+    dirs
+  }) => {
+    await serveSteam()
+    await plexo.evaluateMain(
+      (_electron, value) => {
+        process.env.PLEXO_E2E_STEAM_ROOT = value
+      },
+      join(dirname(dirs.dest), 'no Steam here')
+    )
+    await plexo.loginSteam()
+    const page = plexo.page
+    await page.getByRole('button', { name: 'Steam', exact: true }).click()
+    const dialog = page.getByRole('dialog', { name: 'Steam' })
+    await dialog.getByRole('button', { name: 'Plexo Test Game' }).click()
+    await dialog.getByRole('button', { name: 'Auto-detect' }).click()
+    await expect(
+      dialog.getByText('Plexo couldn’t find Steam on this computer.', { exact: false })
+    ).toBeVisible()
   })
 
   test('a password-protected branch is listed, but can’t be picked', async ({
