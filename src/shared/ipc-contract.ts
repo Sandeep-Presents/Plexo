@@ -1,4 +1,12 @@
 import type {
+  SteamAppDetails,
+  SteamLoginRequest,
+  SteamLoginState,
+  SteamOwnedApp,
+  SteamPlan,
+  SteamPrepareRequest
+} from './steam'
+import type {
   AppSettings,
   DownloadUpdate,
   FinishedDownload,
@@ -12,7 +20,7 @@ import type {
 
 /** The request/response half of the IPC surface (every IpcChannels entry except the
  * main->renderer push events, downloadUpdated, networksChanged, magnetCheckStatus, historyChanged,
- * linkReceived and updateStateChanged) — one source of truth for
+ * linkReceived, updateStateChanged, steamLoginStateChanged and steamPrepareProgress) — one source of truth for
  * both plexoApi (preload) and registerIpcHandlers (main), so a signature drift between the two
  * is a compile error instead of a runtime one. */
 export interface IpcContract {
@@ -66,4 +74,20 @@ export interface IpcContract {
   resumeFromLink: { args: [linkId: string, downloadId: string]; result: void }
   /** Forgets the sign-in of a link that won't be started. */
   dismissLink: { args: [id: string]; result: void }
+  /** The Steam login, as the window may know it: never a password, code or token. Asking for it
+   * is what first logs in with a stored login. */
+  steamLoginState: { args: []; result: SteamLoginState }
+  /** Starts logging in; steamLoginStateChanged says what comes next. */
+  steamLogin: { args: [request: SteamLoginRequest]; result: void }
+  /** The Steam Guard code the user typed, for the login waiting for one. */
+  steamSubmitCode: { args: [code: string]; result: void }
+  steamCancelLogin: { args: []; result: void }
+  /** Logs out, and forgets a remembered login. */
+  steamLogout: { args: []; result: void }
+  /** The apps the account owns that can be downloaded. `refresh` asks Steam again. */
+  steamOwnedApps: { args: [refresh?: boolean]; result: SteamOwnedApp[] }
+  steamAppDetails: { args: [appId: number]; result: SteamAppDetails }
+  /** Works out a download (its manifests fetched, an existing folder checked): startDownload
+   * takes the plan's id. */
+  steamPrepare: { args: [request: SteamPrepareRequest]; result: SteamPlan }
 }

@@ -26,6 +26,14 @@ import type {
   TorrentDownloadState
 } from '../src/shared/types'
 import { Origin, sha256, type OriginOptions } from './origin'
+import {
+  ACCOUNT,
+  GUARD_CODE,
+  OWNED_DEPOTS,
+  SteamOrigin,
+  type SteamAppFixture,
+  type SteamOriginOptions
+} from './steamOrigin'
 
 export { expect }
 
@@ -38,6 +46,12 @@ export function expectHttp(state: DownloadState): HttpDownloadState {
 export function expectTorrent(state: DownloadState): TorrentDownloadState {
   expect(state.kind).toBe('torrent')
   if (state.kind !== 'torrent') throw new Error('Expected a torrent download')
+  return state
+}
+
+export function expectSteam(state: DownloadState): SteamDownloadState {
+  expect(state.kind).toBe('steam')
+  if (state.kind !== 'steam') throw new Error('Expected a Steam download')
   return state
 }
 
@@ -83,6 +97,15 @@ interface StartOptions {
   destinationDir?: string
   /** For a torrent: the files to download, by index. */
   selectedFiles?: number[]
+}
+
+interface SteamStartOptions {
+  depots?: number[]
+  networks?: string[]
+  connections?: number | 'auto'
+  destinationDir?: string
+  /** Install into the existing folder named after the game. */
+  adopt?: boolean
 }
 
 interface Tracked {
@@ -270,6 +293,67 @@ export class PlexoApp {
     )
     this.tracked.set(id, { expectedSha, destBefore, destinationDir })
     return id
+  }
+
+  /** Points the app at `steam` for Steam itself, for this launch and the next. */
+  async useSteam(steam: SteamOrigin): Promise<void> {
+    this.extraEnv.PLEXO_E2E_STEAM = steam.url
+    await this.evaluateMain((_electron, url) => {
+      process.env.PLEXO_E2E_STEAM = url
+    }, steam.url)
+  }
+
+  /** Logs in to the fake Steam with the test account, typing the Steam Guard code if asked. */
+  async loginSteam(): Promise<void> {
+    await this.api.steamLogin({
+      method: 'credentials',
+      accountName: ACCOUNT.name,
+      password: ACCOUNT.password,
+      remember: false
+    })
+    const deadline = Date.now() + 10_000
+    while (Date.now() < deadline) {
+      const state = await this.api.steamLoginState()
+      if (state.status === 'logged-in') return
+      if (state.status === 'awaiting-code') await this.api.steamSubmitCode(GUARD_CODE)
+      if (state.status === 'logged-out') {
+        throw new Error(`Steam login failed: ${state.error ?? 'logged out'}`)
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    }
+    throw new Error('Steam login timed out')
+  }
+
+  /** Plans and starts a Steam download of `steam`'s app as the Steam dialog does, logging in
+   * first if need be. */
+  async startSteam(steam: SteamOrigin, options: SteamStartOptions = {}): Promise<string> {
+    await this.pinStreams(options.connections)
+    if ((await this.api.steamLoginState()).status !== 'logged-in') await this.loginSteam()
+    await this.api.listInterfaces()
+    const depots = options.depots ?? OWNED_DEPOTS
+    const destinationDir = options.destinationDir ?? this.dirs.dest
+    const destBefore = existsSync(destinationDir) ? await readdir(destinationDir) : []
+    const plan = await this.api.steamPrepare({
+      appId: steam.app.appId,
+      branch: 'public',
+      depotIds: depots,
+      destinationDir,
+      adopt: options.adopt ?? false
+    })
+    const id = await this.api.startDownload({
+      kind: 'steam',
+      planId: plan.planId,
+      interfaceIds: options.networks ?? ['a']
+    })
+    this.tracked.set(id, { expectedSha: steam.expectedSha(depots), destBefore, destinationDir })
+    return id
+  }
+
+  async waitForSteamStatus(
+    status: DownloadStatus | DownloadStatus[],
+    timeout = 20_000
+  ): Promise<SteamDownloadState> {
+    return expectSteam(await this.waitForStatus(status, timeout))
   }
 
   /** For downloads started through the UI rather than start(): declares what the next one
@@ -635,6 +719,9 @@ export async function checkFinalState(app: PlexoApp): Promise<void> {
       expect(await shaOfPath(state.destinationPath), 'completed download matches its source').toBe(
         tracked.expectedSha
       )
+    } else if (state.kind === 'steam' && state.adopted) {
+      // Installed into a folder that was there before: it stays, whatever happens to the download.
+      expect(existsSync(state.destinationPath), 'the existing folder is left').toBe(true)
     } else {
       expect(existsSync(state.destinationPath), 'no file left at the destination').toBe(false)
     }
@@ -652,10 +739,16 @@ export async function checkFinalState(app: PlexoApp): Promise<void> {
     const before = new Set(into[0].tracked.destBefore)
     const destAfter = existsSync(destinationDir) ? await readdir(destinationDir) : []
     const added = destAfter.filter((name) => !before.has(name)).sort()
-    const expectedAdded = into
-      .filter(({ state }) => state.status === 'completed')
-      .map(({ state }) => state.destinationPath.split(/[\\/]/).pop())
-      .sort()
+    // A Steam install into an existing folder adds no name of its own (nor does a second
+    // install into the folder an earlier one made).
+    const expectedAdded = [
+      ...new Set(
+        into
+          .filter(({ state }) => state.status === 'completed')
+          .map(({ state }) => state.destinationPath.split(/[\\/]/).pop()!)
+          .filter((name) => !before.has(name))
+      )
+    ].sort()
     expect(added, 'no stray files (placeholders, partials) in the destination folder').toEqual(
       expectedAdded
     )
@@ -691,6 +784,8 @@ interface Fixtures {
   dirs: { userData: string; dest: string }
   /** Starts a test server; every one started is stopped after the test. */
   serve: (options: OriginOptions) => Promise<Origin>
+  /** Starts a fake Steam and points the app at it; stopped after the test. */
+  serveSteam: (app?: SteamAppFixture, options?: SteamOriginOptions) => Promise<SteamOrigin>
   plexo: PlexoApp
   checks: void
 }
@@ -716,6 +811,21 @@ export const test = base.extend<Fixtures>({
     if (testInfo.status !== testInfo.expectedStatus) {
       const log = origins.map((origin) => origin.log)
       await testInfo.attach('server-requests.json', { body: JSON.stringify(log, null, 2) })
+    }
+    await Promise.all(origins.map((origin) => origin.stop()))
+  },
+
+  serveSteam: async ({ plexo }, use, testInfo) => {
+    const origins: SteamOrigin[] = []
+    await use(async (app, options) => {
+      const steam = await new SteamOrigin(app, options).start()
+      origins.push(steam)
+      await plexo.useSteam(steam)
+      return steam
+    })
+    if (testInfo.status !== testInfo.expectedStatus) {
+      const log = origins.map((origin) => origin.log)
+      await testInfo.attach('steam-requests.json', { body: JSON.stringify(log, null, 2) })
     }
     await Promise.all(origins.map((origin) => origin.stop()))
   },

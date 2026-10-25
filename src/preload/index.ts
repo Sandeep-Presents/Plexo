@@ -2,6 +2,12 @@ import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'ele
 import { IpcChannels } from '../shared/ipc-channels'
 import type { IpcContract } from '../shared/ipc-contract'
 import type {
+  SteamLoginRequest,
+  SteamLoginState,
+  SteamPrepareProgress,
+  SteamPrepareRequest
+} from '../shared/steam'
+import type {
   AppSettings,
   DownloadUpdate,
   InitialState,
@@ -62,6 +68,28 @@ const plexoApi = {
   resumeFromLink: (linkId: string, downloadId: string) =>
     invoke('resumeFromLink', linkId, downloadId),
   dismissLink: (id: string) => invoke('dismissLink', id),
+  steamLoginState: () => invoke('steamLoginState'),
+  steamLogin: (request: SteamLoginRequest) => invoke('steamLogin', request),
+  steamSubmitCode: (code: string) => invoke('steamSubmitCode', code),
+  steamCancelLogin: () => invoke('steamCancelLogin'),
+  steamLogout: () => invoke('steamLogout'),
+  steamOwnedApps: (refresh?: boolean) => invoke('steamOwnedApps', refresh),
+  steamAppDetails: (appId: number) => invoke('steamAppDetails', appId),
+  steamPrepare: (request: SteamPrepareRequest) => invoke('steamPrepare', request),
+
+  onSteamLoginState: (callback: (state: SteamLoginState) => void): (() => void) => {
+    const listener = (_event: IpcRendererEvent, state: SteamLoginState): void => callback(state)
+    ipcRenderer.on(IpcChannels.steamLoginStateChanged, listener)
+    return () => ipcRenderer.removeListener(IpcChannels.steamLoginStateChanged, listener)
+  },
+
+  /** How far steamPrepare has got: manifests fetched, or an existing folder checked. */
+  onSteamPrepareProgress: (callback: (progress: SteamPrepareProgress) => void): (() => void) => {
+    const listener = (_event: IpcRendererEvent, progress: SteamPrepareProgress): void =>
+      callback(progress)
+    ipcRenderer.on(IpcChannels.steamPrepareProgress, listener)
+    return () => ipcRenderer.removeListener(IpcChannels.steamPrepareProgress, listener)
+  },
 
   /** pendingLinks() has the new link. */
   onLinkReceived: (callback: () => void): (() => void) => {

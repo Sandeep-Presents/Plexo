@@ -38,6 +38,14 @@ export const testKnobs = {
   torrentDhtBootstrap: env['PLEXO_E2E_DHT_BOOTSTRAP']?.split(',').filter(Boolean)
 }
 
+/** `PLEXO_E2E_STEAM=http://127.0.0.1:1234` stands a local fake in for Steam itself (see
+ * steam/fakeBackend.ts and e2e/steamOrigin.ts). Read when Steam is first used rather than at
+ * launch, so a test can start its fake Steam after the app. */
+export function testSteamFake(): string | undefined {
+  if (app.isPackaged) return undefined
+  return process.env['PLEXO_E2E_STEAM'] || undefined
+}
+
 /** `PLEXO_E2E_STREAMS=2` fixes how many streams each network runs and turns the automatic
  * sizing off, so a test can count requests. Read on every call rather than once, so a test can
  * change it between downloads. */

@@ -28,6 +28,10 @@ import {
   type StartDownloadRequest,
   type StartHttpDownloadRequest,
   type StartTorrentDownloadRequest,
+  type StartSteamDownloadRequest,
+  type SteamDownloadNetwork,
+  type SteamDownloadState,
+  type SteamRequestPayload,
   type TorrentDownloadNetwork,
   type TorrentDownloadState,
   type TorrentFileEntry,
@@ -41,7 +45,7 @@ import { testKnobs } from '../testKnobs'
 import { DownloadFile } from './downloadFile'
 import { compareSamples, HttpTransfer, pickedStreams, splittable } from './httpTransfer'
 import { normalizeEtag } from './fileVersion'
-import { ensureDirectory, pathExists, reserveDestinationPath } from './paths'
+import { claimDestinationPath, ensureDirectory, pathExists, reserveDestinationPath } from './paths'
 import { planBlocks, planDownload, planPieces } from './plan'
 import { restoreBlocks, restorePieces, saveBlocks, type SavedBlocks } from './savedProgress'
 import { chosenFiles, finishedFiles, wantedPieces } from './torrent/files'
@@ -60,9 +64,23 @@ import {
   type Transfer,
   type TransferHost,
   type HttpTransferTarget,
+  type SteamTransferTarget,
   type TorrentTransferTarget
 } from './transfer'
 import type { NetworkMonitor } from '../network/interfaces'
+import { checkFolderName, buildLayout, type SteamLayout } from '../steam/layout'
+import type { ChunkBook } from '../steam/cells'
+import {
+  chunkBook,
+  decodeUnits,
+  encodeUnits,
+  readManifests,
+  writeManifests,
+  type SavedSteamProgress
+} from '../steam/runtime'
+import { createSteamServices, type SteamServices } from '../steam/service'
+import { SteamDestination } from '../steam/steamDestination'
+import { SteamTransfer } from '../steam/steamTransfer'
 import {
   compatibleInterfaces,
   NoCompatibleRouteError,
@@ -115,24 +133,38 @@ interface TorrentDownloadRuntime extends RuntimeFields, TorrentTransferTarget {
   transfer: TorrentTransfer
 }
 
-type DownloadRuntime = HttpDownloadRuntime | TorrentDownloadRuntime
+interface SteamDownloadRuntime extends RuntimeFields, SteamTransferTarget {
+  kind: 'steam'
+  file: SteamDestination
+  transfer: SteamTransfer
+  layout: SteamLayout
+  book: ChunkBook
+  /** For each of the book's chunks, its unit in the layout. */
+  units: Uint32Array
+}
+
+type DownloadRuntime = HttpDownloadRuntime | TorrentDownloadRuntime | SteamDownloadRuntime
 
 interface PersistedDownloadBase {
   savedAt: number
   partialPath: string
   publicationPath?: string
   publicationIdentity?: { dev: number; ino: number }
-  requestPayload: StartDownloadRequest
+  requestPayload: StartHttpDownloadRequest | StartTorrentDownloadRequest | SteamRequestPayload
   /** Kept apart from requestPayload, sealed (see sealBrowser). */
   browser?: string
 }
 
 type PersistedState =
-  Omit<HttpDownloadState, 'blocks' | 'streams'> | Omit<TorrentDownloadState, 'pieces' | 'peers'>
+  | Omit<HttpDownloadState, 'blocks' | 'streams'>
+  | Omit<TorrentDownloadState, 'pieces' | 'peers'>
+  | Omit<SteamDownloadState, 'cells' | 'streams'>
 
 type PersistedDownload = PersistedDownloadBase & {
   version: 7
   state: PersistedState
+  /** A Steam download's own progress (see SavedSteamProgress). */
+  steam?: SavedSteamProgress
 } & SavedBlocks
 
 /** Cookies are never written in the clear. Without a keychain (Linux falls back to a fixed key)
@@ -248,12 +280,20 @@ function newTorrentNetwork(iface: NetworkInterfaceInfo, enabled: boolean): Torre
   }
 }
 
+function newSteamNetwork(iface: NetworkInterfaceInfo, enabled: boolean): SteamDownloadNetwork {
+  return { ...newHttpNetwork(iface, enabled), transfer: 'steam' }
+}
+
 /** A block that needs nothing more: in, or skipped (see BlockStatus). */
 const isDone = (unit: DownloadUnitState): boolean =>
   unit.status === 'completed' || unit.status === 'skipped'
 
 const unitsOf = (runtime: DownloadRuntime): DownloadUnitState[] =>
-  runtime.kind === 'http' ? runtime.blocks : runtime.pieces
+  runtime.kind === 'http'
+    ? runtime.blocks
+    : runtime.kind === 'steam'
+      ? runtime.cells
+      : runtime.pieces
 
 /** A torrent download's files as its state shows them, given those `chosen` (null: every one). */
 function choiceOf(chosen: Set<number> | null, total: number): TorrentDownloadState['files'] {
@@ -315,6 +355,13 @@ async function partialLeftovers(persisted: unknown): Promise<string[]> {
     state?: { status?: unknown; destinationPath?: unknown }
   } | null
   const leftovers: string[] = []
+  // A Steam download installs in place, in a folder named after the game: nothing of it is ever
+  // a leftover to clear (see SteamDestination.discard, which removes only what it installed).
+  if (
+    (persisted as { requestPayload?: { kind?: unknown } } | null)?.requestPayload?.kind === 'steam'
+  ) {
+    return leftovers
+  }
   const partial = manifest?.partialPath
   if (typeof partial === 'string' && isAbsolute(partial)) {
     if (partial.endsWith('.plexo')) leftovers.push(partial)
@@ -366,11 +413,19 @@ export class DownloadManager {
   private downloadsAtOnce = DOWNLOADS_AT_ONCE.default
   /** Speed and data limits, for every download together. */
   readonly limits = new Limits(() => this.limitsChanged())
+  /** The Steam login, library and plans, and the workers that check chunks. */
+  readonly steam: SteamServices
 
   constructor(
     private getWindow: () => BrowserWindow | null,
     private networks: NetworkMonitor
   ) {
+    this.steam = createSteamServices({
+      networks,
+      limits: this.limits,
+      loginChanged: (state) => this.send(IpcChannels.steamLoginStateChanged, state),
+      progress: (progress) => this.send(IpcChannels.steamPrepareProgress, progress)
+    })
     this.initialization = Promise.all([this.restorePersistedDownloads(), this.limits.loaded]).then(
       async () => {
         // Read after recovery, including any settings saved while the manifests were loading.
@@ -470,11 +525,14 @@ export class DownloadManager {
   private httpDownloadsOn(networkId: string): number {
     let count = 0
     for (const runtime of this.runtimes.values()) {
+      const onAuto =
+        runtime.kind === 'http'
+          ? splittable(runtime.requestPayload) &&
+            pickedStreams(runtime.requestPayload) === undefined
+          : runtime.kind === 'steam' && runtime.requestPayload.streamsPerNetwork === undefined
       if (
-        runtime.kind === 'http' &&
+        onAuto &&
         runtime.state.status === 'downloading' &&
-        splittable(runtime.requestPayload) &&
-        pickedStreams(runtime.requestPayload) === undefined &&
         runtime.state.networks.some(
           (network) => network.id === networkId && network.status === 'on'
         )
@@ -517,6 +575,16 @@ export class DownloadManager {
     runtime.state.queuedAt = front
       ? Math.min(Date.now(), ...places) - 1
       : Math.max(Date.now(), ...places.map((place) => place + 1))
+  }
+
+  private send(channel: string, payload: unknown): void {
+    const window = this.getWindow()
+    if (window && !window.isDestroyed()) window.webContents.send(channel, payload)
+  }
+
+  /** Where a Steam download keeps the manifests it installs from, beside its manifest.json. */
+  private steamManifestsPath(id: string): string {
+    return join(this.downloadDir(id), 'steam-manifests.json.gz')
   }
 
   private downloadsRoot(): string {
@@ -612,6 +680,46 @@ export class DownloadManager {
     return runtime
   }
 
+  private newSteamRuntime(
+    state: SteamDownloadState,
+    requestPayload: SteamRequestPayload,
+    file: SteamDestination,
+    layout: SteamLayout,
+    book: ChunkBook,
+    units: Uint32Array
+  ): SteamDownloadRuntime {
+    const target: SteamTransferTarget & { file: SteamDestination } = {
+      state,
+      requestPayload,
+      stop: new AbortController(),
+      file,
+      cells: book.cells,
+      meters: new Meters()
+    }
+    const host: TransferHost = {
+      networks: this.networks,
+      limits: this.limits,
+      downloadsOn: (networkId) => this.httpDownloadsOn(networkId),
+      reconcile: () => this.reconcile(runtime),
+      failDownload: (message, discard) => this.failDownload(runtime, message, discard),
+      failNetwork: (network, message) => this.failNetwork(runtime, network, message),
+      scheduleUpdate: () => this.scheduleUpdate(runtime)
+    }
+    const runtime: SteamDownloadRuntime = Object.assign(target, this.runtimeFields(), {
+      kind: 'steam' as const,
+      layout,
+      book,
+      units,
+      transfer: new SteamTransfer(
+        target,
+        host,
+        { file, layout, book, units },
+        { account: this.steam.account, workers: this.steam.workers }
+      )
+    })
+    return runtime
+  }
+
   private async restorePersistedDownloads(): Promise<void> {
     let entries: string[]
     try {
@@ -691,6 +799,11 @@ export class DownloadManager {
       void omittedBlocks
       void omittedStreams
       entry = { ...state, unitsWritten: state.totalBlocks }
+    } else if (runtime.kind === 'steam') {
+      const { cells: omittedCells, streams: omittedStreams, ...state } = runtime.state
+      void omittedCells
+      void omittedStreams
+      entry = { ...state, unitsWritten: state.totalChunks }
     } else {
       const { pieces, peers: omittedPeers, ...state } = runtime.state
       void omittedPeers
@@ -740,7 +853,7 @@ export class DownloadManager {
     id: string,
     persisted: PersistedDownload
   ): Promise<DownloadRuntime | null> {
-    const requestPayload: StartDownloadRequest =
+    const requestPayload =
       persisted.requestPayload.kind === 'http' && typeof persisted.browser === 'string'
         ? { ...persisted.requestPayload, browser: unsealBrowser(persisted.browser) }
         : persisted.requestPayload
@@ -783,6 +896,54 @@ export class DownloadManager {
         ),
         pieces,
         torrentFile
+      )
+    } else if (persisted.state.kind === 'steam' && requestPayload.kind === 'steam') {
+      // Its layout, worked out again from the manifests it saved, every path checked anew.
+      const manifests = await readManifests(this.steamManifestsPath(id))
+      if (!manifests) return null
+      let layout: SteamLayout
+      try {
+        layout = buildLayout(manifests)
+      } catch {
+        return null
+      }
+      const units = decodeUnits(persisted.steam?.units, layout)
+      if (!units) return null
+      const book = chunkBook(layout, units)
+      // Progress that doesn't fit is dropped: the chunks are fetched again, never trusted.
+      book.restore(persisted.steam?.chunks)
+      // Which files it made, for cancelling an install into an existing folder: a list that
+      // doesn't fit counts as none, so that a cancel never removes what was there before.
+      const saved = persisted.steam?.created
+      const created =
+        Array.isArray(saved) &&
+        saved.every((index) => Number.isInteger(index) && index >= 0 && index < layout.files.length)
+          ? saved
+          : []
+      const old = persisted.state
+      state = {
+        ...old,
+        streams: [],
+        cells: book.cells,
+        totalCells: book.cells.length,
+        totalChunks: book.count,
+        chunksDone: book.chunksDone,
+        bytesDownloaded: book.bytesDone,
+        phase: undefined
+      }
+      runtime = this.newSteamRuntime(
+        state,
+        requestPayload,
+        new SteamDestination(
+          persisted.partialPath,
+          layout,
+          () => state.totalBytes,
+          !!old.adopted,
+          created
+        ),
+        layout,
+        book,
+        units
       )
     } else if (persisted.state.kind === 'http' && requestPayload.kind === 'http') {
       const old = persisted.state
@@ -827,7 +988,13 @@ export class DownloadManager {
               .catch(() => false)
           : persisted.publicationIdentity?.dev === published.dev &&
             persisted.publicationIdentity?.ino === published.ino)
-      if (units.every(isDone) && publishedSize === expected && sameFile) {
+      // A Steam install is in place from the start, so its folder being there says nothing:
+      // only the publication recorded after its final sync does.
+      const recorded =
+        runtime.kind !== 'steam' ||
+        (persisted.publicationIdentity?.dev === published?.dev &&
+          persisted.publicationIdentity?.ino === published?.ino)
+      if (units.every(isDone) && publishedSize === expected && sameFile && recorded) {
         state.status = 'completed'
         state.destinationPath = publishedPath
         state.fileName = basename(publishedPath)
@@ -836,9 +1003,12 @@ export class DownloadManager {
         if (size >= 0) await file.discardLeftover()
       } else if (size < 0) {
         state.status = 'error'
-        state.error = 'The partial download file is missing. Remove this download and start again.'
+        state.error =
+          runtime.kind === 'steam'
+            ? 'The install folder is missing. Remove this download and start again.'
+            : 'The partial download file is missing. Remove this download and start again.'
         state.resumable = false
-      } else {
+      } else if (runtime.kind !== 'steam') {
         for (const unit of units) {
           const length = unit.rangeEnd === null ? 0 : unit.rangeEnd - unit.rangeStart + 1
           if (
@@ -890,6 +1060,10 @@ export class DownloadManager {
           const { blocks, ...state } = runtime.state
           return structuredClone({ seq: runtime.sentUpdates, state, blocks })
         }
+        if (runtime.kind === 'steam') {
+          const { cells, ...state } = runtime.state
+          return structuredClone({ seq: runtime.sentUpdates, state, cells })
+        }
         const { pieces, ...state } = runtime.state
         return structuredClone({ seq: runtime.sentUpdates, state, pieces })
       })
@@ -897,9 +1071,6 @@ export class DownloadManager {
 
   async start(requestPayload: StartDownloadRequest): Promise<string> {
     await this.initialization
-    if (requestPayload.kind === 'steam') {
-      throw new Error('Steam downloads aren’t available in this build.')
-    }
     if (requestPayload.kind === 'http' && requestPayload.browser !== undefined) {
       const browser = browserContextFrom(requestPayload.browser)
       if (!browser) throw new Error('The browser’s details for this download couldn’t be read.')
@@ -911,10 +1082,13 @@ export class DownloadManager {
     if (selected.length === 0) {
       throw new Error('Select at least one network')
     }
-    await ensureDirectory(requestPayload.destinationDir)
+    // A Steam download's folder is in its plan, checked there.
+    if (requestPayload.kind !== 'steam') await ensureDirectory(requestPayload.destinationDir)
     const id = randomUUID()
     let runtime: DownloadRuntime
-    if (requestPayload.kind === 'torrent') {
+    if (requestPayload.kind === 'steam') {
+      runtime = await this.newSteamDownload(id, requestPayload, available, selected)
+    } else if (requestPayload.kind === 'torrent') {
       const torrentFile = probedTorrentFile(requestPayload.infoHash)
       if (!torrentFile) throw new Error('Add the torrent again to start downloading.')
       const torrentProbe = await describeTorrent(torrentFile, requestPayload.url)
@@ -1025,6 +1199,105 @@ export class DownloadManager {
     return id
   }
 
+  /**
+   * The Steam download a plan from steamPrepare describes: its install folder claimed, or the
+   * existing one it was checked against taken over, and its manifests saved beside its
+   * manifest.json so that a restart can work its layout out again without Steam.
+   */
+  private async newSteamDownload(
+    id: string,
+    request: StartSteamDownloadRequest,
+    available: NetworkInterfaceInfo[],
+    selected: NetworkInterfaceInfo[]
+  ): Promise<SteamDownloadRuntime> {
+    // Taken out of the planner at once, so that a second click can't start it twice.
+    const prepared = this.steam.planner.take(request.planId)
+    if (!prepared) throw new Error('This choice has expired. Choose what to download again.')
+    const { plan, layout, units } = prepared
+    const adopt = prepared.request.adopt === true
+    const destinationDir = plan.destinationDir
+    // Plexo's cleanup of leftovers removes anything named .plexo whole: never an install.
+    checkFolderName(basename(destinationDir))
+    checkFolderName(prepared.folderName)
+    await ensureDirectory(destinationDir)
+    await ensureDiskSpace(destinationDir, Math.max(0, layout.installBytes - plan.presentBytes))
+    // What was checked as already there must still be as it was, or chunks counted present
+    // might not be.
+    for (const file of prepared.checked) {
+      const info = await lstat(file.path).catch(() => null)
+      if (!info?.isFile() || info.size !== file.size || info.mtimeMs !== file.mtimeMs) {
+        throw new Error('Files in this folder changed after it was checked. Check it again.')
+      }
+    }
+
+    await ensureDirectory(this.downloadDir(id))
+    let folder: string
+    try {
+      await writeManifests(this.steamManifestsPath(id), prepared.manifests)
+      if (adopt) {
+        folder = join(destinationDir, prepared.folderName)
+        if (!(await lstat(folder).catch(() => null))?.isDirectory()) {
+          throw new Error(`There is no folder named ${prepared.folderName} to install into.`)
+        }
+      } else {
+        folder = await claimDestinationPath(destinationDir, prepared.folderName, true)
+      }
+    } catch (error) {
+      await rm(this.downloadDir(id), { recursive: true, force: true }).catch(() => {})
+      throw error
+    }
+
+    const book = chunkBook(layout, units)
+    const state: SteamDownloadState = {
+      id,
+      kind: 'steam',
+      url: `steam://app/${plan.appId}`,
+      fileName: basename(folder),
+      destinationPath: folder,
+      totalBytes: plan.downloadBytes,
+      bytesDownloaded: 0,
+      speedBytesPerSec: 0,
+      status: 'downloading',
+      networks: available.map((iface) => newSteamNetwork(iface, selected.includes(iface))),
+      streams: [],
+      peakStreams: 0,
+      cells: book.cells,
+      totalCells: book.cells.length,
+      totalChunks: book.count,
+      chunksDone: 0,
+      app: {
+        appId: plan.appId,
+        name: plan.appName,
+        branch: prepared.branch,
+        buildId: prepared.buildId
+      },
+      depots: prepared.depots,
+      fileCount: plan.fileCount,
+      installBytes: layout.installBytes,
+      adopted: adopt || undefined,
+      phase: 'preparing',
+      startedAt: Date.now()
+    }
+    // What is saved to resume it: never the plan id, which means nothing after a restart.
+    const payload: SteamRequestPayload = {
+      kind: 'steam',
+      appId: plan.appId,
+      branch: prepared.branch,
+      depots: prepared.depots.map(({ depotId, manifestId }) => ({ depotId, manifestId })),
+      destinationDir,
+      interfaceIds: request.interfaceIds,
+      streamsPerNetwork: request.streamsPerNetwork
+    }
+    return this.newSteamRuntime(
+      state,
+      payload,
+      new SteamDestination(folder, layout, () => state.totalBytes, adopt),
+      layout,
+      book,
+      units
+    )
+  }
+
   /** Runs the download, and once the run ends makes room for the next one queued. */
   private launch(runtime: DownloadRuntime): void {
     runtime.runPromise = this.run(runtime).finally(() => this.pump())
@@ -1063,6 +1336,14 @@ export class DownloadManager {
           stream.status = 'paused'
         }
         stream.currentBlockIndex = undefined
+        stream.hedge = undefined
+      }
+    } else if (runtime.kind === 'steam') {
+      for (const stream of runtime.state.streams) {
+        if (stream.status !== 'completed') stream.status = 'paused'
+        stream.currentCellIndex = undefined
+        stream.chunkReceived = undefined
+        stream.chunkBytes = undefined
         stream.hedge = undefined
       }
     }
@@ -1293,15 +1574,15 @@ export class DownloadManager {
       }
       if (unit.kind === 'torrent') unit.provisionalBytes = 0
     }
-    if (runtime.kind === 'http') {
+    if (runtime.kind === 'torrent') {
+      runtime.state.peers.length = 0
+    } else {
       for (const stream of runtime.state.streams) {
         if (stream.status !== 'completed') {
           stream.status = 'pending'
         }
         stream.speedBytesPerSec = 0
       }
-    } else {
-      runtime.state.peers.length = 0
     }
     runtime.transfer.reset()
     this.pushUpdate(runtime)
@@ -1510,7 +1791,7 @@ export class DownloadManager {
       await runtime.file.discard()
       await this.removePersistedDownload(runtime, false)
       runtime.state.status = 'cancelled'
-      if (runtime.kind === 'http') {
+      if (runtime.kind !== 'torrent') {
         for (const stream of runtime.state.streams) stream.status = 'cancelled'
       }
       this.pushUpdate(runtime, false)
@@ -1655,6 +1936,9 @@ export class DownloadManager {
     if (runtime.peakReadings.at(-1)?.bytes !== runtime.state.bytesDownloaded) {
       runtime.peakReadings.push({ time: tickedAt, bytes: runtime.state.bytesDownloaded })
     }
+    // A Steam install is written in place: what went missing from it since the last run is
+    // found before the loop below decides whether anything is left to fetch.
+    if (runtime.kind === 'steam') await runtime.transfer.checkFiles()
 
     while (
       runtime.state.status === 'downloading' &&
@@ -1804,6 +2088,14 @@ export class DownloadManager {
             present.some((iface) => iface.id === network.id) ||
             state.streams.some((stream) => stream.interfaceId === network.id)
         )
+      } else if (state.kind === 'steam') {
+        state.networks = state.networks.filter(
+          (network) =>
+            network.enabled ||
+            network.bytesDownloaded > 0 ||
+            present.some((iface) => iface.id === network.id) ||
+            state.streams.some((stream) => stream.interfaceId === network.id)
+        )
       } else {
         state.networks = state.networks.filter(
           (network) =>
@@ -1817,6 +2109,7 @@ export class DownloadManager {
       for (const iface of present) {
         if (!state.networks.some((network) => network.id === iface.id)) {
           if (state.kind === 'http') state.networks.push(newHttpNetwork(iface, false))
+          else if (state.kind === 'steam') state.networks.push(newSteamNetwork(iface, false))
           else state.networks.push(newTorrentNetwork(iface, false))
         }
       }
@@ -1908,6 +2201,12 @@ export class DownloadManager {
       void omittedBlocks
       return structuredClone({ seq: ++runtime.sentUpdates, state, blocks: changed })
     }
+    if (runtime.kind === 'steam') {
+      const changed = this.changedUnits(runtime, runtime.cells)
+      const { cells: omittedCells, ...state } = runtime.state
+      void omittedCells
+      return structuredClone({ seq: ++runtime.sentUpdates, state, cells: changed })
+    }
     const changed = this.changedUnits(runtime, runtime.pieces)
     const { pieces: omittedPieces, ...state } = runtime.state
     void omittedPieces
@@ -1977,6 +2276,11 @@ export class DownloadManager {
           void omittedBlocks
           void omittedStreams
           state = rest
+        } else if (runtime.kind === 'steam') {
+          const { cells: omittedCells, streams: omittedStreams, ...rest } = runtime.state
+          void omittedCells
+          void omittedStreams
+          state = rest
         } else {
           const { pieces: omittedPieces, peers: omittedPeers, ...rest } = runtime.state
           void omittedPieces
@@ -1991,9 +2295,28 @@ export class DownloadManager {
           partialPath: runtime.file.path,
           publicationPath: runtime.publicationPath,
           publicationIdentity: runtime.publicationIdentity,
-          ...savedRequest(runtime)
+          ...savedRequest(runtime),
+          ...(runtime.kind === 'steam' && {
+            steam: {
+              chunks: runtime.book.save(),
+              created: [...runtime.file.created],
+              units:
+                runtime.units.length === runtime.layout.units.length
+                  ? undefined
+                  : encodeUnits(runtime.units)
+            }
+          })
         }
-        if (['downloading', 'paused', 'queued'].includes(runtime.state.status)) {
+        // A Steam download saved with an error is resumed from what it saved, with no check of
+        // what is on disk (see SteamTransfer): its chunks are synced too.
+        const resumableSteamError =
+          runtime.kind === 'steam' &&
+          runtime.state.status === 'error' &&
+          runtime.state.resumable !== false
+        if (
+          ['downloading', 'paused', 'queued'].includes(runtime.state.status) ||
+          resumableSteamError
+        ) {
           await runtime.file.sync()
         }
         await ensureDirectory(dir)

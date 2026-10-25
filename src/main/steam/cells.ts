@@ -85,7 +85,9 @@ export class ChunkBook {
         index: cell,
         rangeStart,
         rangeEnd: Math.max(rangeStart, offset - 1),
-        status: 'pending',
+        // Only an install with no chunks at all (every file empty) has an empty cell: nothing
+        // is left to fetch for it.
+        status: this.chunksInCell[cell] === 0 ? 'completed' : 'pending',
         bytesDownloaded: 0,
         bytesByInterface: {}
       })

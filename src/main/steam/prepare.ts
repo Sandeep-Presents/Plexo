@@ -49,9 +49,13 @@ export interface PreparedDownload {
   branch: string
   buildId?: string
   depots: PreparedDepot[]
+  /** As read and decrypted: what the download saves, to work its layout out again later. */
+  manifests: Manifest[]
   layout: SteamLayout
-  /** Installing over an existing folder: per layout unit, whether it is on disk and correct. */
-  present: Uint8Array | null
+  /** The layout units to fetch, in order: every one, bar those already on disk and correct
+   * (installing over an existing folder). */
+  units: Uint32Array
+  folderName: string
   /** The files checked, as they were: start refuses a plan whose files changed since. */
   checked: { path: string; size: number; mtimeMs: number }[]
   createdAt: number
@@ -226,8 +230,10 @@ export class SteamPlanner {
           manifestId: manifestFor(depot, request.branch)!.gid,
           name: depot.name
         })),
+        manifests,
         layout,
-        present,
+        units: Uint32Array.from([...layout.units.keys()].filter((index) => !present?.[index])),
+        folderName,
         checked,
         createdAt: now
       })

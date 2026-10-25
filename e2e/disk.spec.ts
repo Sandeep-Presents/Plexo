@@ -4,6 +4,7 @@ import { chmod, mkdir, mkdtemp, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { BLOCK, expect, PlexoApp, test } from './fixtures'
+import { syntheticApp } from './steamOrigin'
 
 // E. The disk: out of space, folders vanishing, no permission. The small volumes are real
 // filesystems (a RAM disk on macOS, tmpfs on Linux), so ENOSPC comes from the OS, not a mock.
@@ -71,6 +72,34 @@ test.describe('disk space @disk', () => {
       await expect(
         plexo.start(origin.url(), origin.sha256, { destinationDir: dest })
       ).rejects.toThrow(/Not enough disk space/)
+      expect(await readdir(dest)).toEqual([])
+      const downloads = join(dirs.userData, 'downloads')
+      expect(existsSync(downloads) ? await readdir(downloads) : []).toEqual([])
+    } finally {
+      await plexo.quit()
+      await volume!.dispose()
+    }
+  })
+
+  test('a Steam game bigger than the free space is refused before anything is written', async ({
+    plexo,
+    serveSteam,
+    dirs
+  }) => {
+    const volume = await smallVolume(10)
+    test.skip(!volume, 'cannot create a small volume on this machine')
+    try {
+      const dest = join(volume!.path, 'dest')
+      await mkdir(dest)
+      // About 14 MB installed; zstd, which is quick to build at this size, unlike LZMA.
+      const big = syntheticApp(1, 40)
+      const steam = await serveSteam({
+        ...big,
+        depots: big.depots.map((depot) => ({ ...depot, compression: () => 'zstd' as const }))
+      })
+      await expect(plexo.startSteam(steam, { destinationDir: dest })).rejects.toThrow(
+        /Not enough disk space/
+      )
       expect(await readdir(dest)).toEqual([])
       const downloads = join(dirs.userData, 'downloads')
       expect(existsSync(downloads) ? await readdir(downloads) : []).toEqual([])

@@ -35,5 +35,15 @@ export const IpcChannels = {
   dismissLink: 'app:dismiss-link',
   updateState: 'update:state',
   updateStateChanged: 'update:state-changed',
-  showUpdateMenu: 'update:show-menu'
+  showUpdateMenu: 'update:show-menu',
+  steamLoginState: 'steam:login-state',
+  steamLogin: 'steam:login',
+  steamSubmitCode: 'steam:submit-code',
+  steamCancelLogin: 'steam:cancel-login',
+  steamLogout: 'steam:logout',
+  steamOwnedApps: 'steam:owned-apps',
+  steamAppDetails: 'steam:app-details',
+  steamPrepare: 'steam:prepare',
+  steamLoginStateChanged: 'steam:login-state-changed',
+  steamPrepareProgress: 'steam:prepare-progress'
 } as const

@@ -4,7 +4,7 @@
 
 Plexo speeds up one download by spreading its chunks across several networks: Wi-Fi, Ethernet, a tethered phone. It handles HTTP links and torrents today. This plan adds a third kind, **Steam**. The depot chunks of a game the account owns are fetched over every selected network in parallel. Each request uses Plexo's own pinned connections and is counted through `Limits`. Each chunk is decrypted, decompressed and checked against the manifest before anything is written.
 
-Status: Phase 0 design, waiting for review before any feature code is written. Each later phase ends with lint, typecheck, format:check, smoke tests, a commit and a report.
+Status: Phases 1 and 2 are built: the protocol layer and the download itself, tested end to end against a fake Steam (`e2e/steamOrigin.ts`). This document describes what was built; where the first draft differed after review, the corrections are listed under "Changes after review" and the sections below say what is done now. Each phase ends with lint, typecheck, format:check, smoke tests, a commit and a report.
 
 **Decisions made with the maintainer:**
 
@@ -14,6 +14,26 @@ Status: Phase 0 design, waiting for review before any feature code is written. E
 | Phase 4        | Deferred. Folder installs only; `DESIGN.md` records why, with a design sketch.                                                                                                                             |
 | UI             | A separate Steam dialog.                                                                                                                                                                                   |
 | Family Sharing | Borrowed licenses are included, labelled "Family Sharing", and downloaded only when Steam itself grants the depot key.                                                                                     |
+
+## Changes after review
+
+An independent review of the first draft, and building it, changed these points:
+
+1. **No "durable set".** `persistNow` already snapshots a download's progress _before_ it calls `file.sync()`, so a chunk done during the sync is saved at the next checkpoint, never ahead of its data. Steam does the same: a chunk is done once every one of its writes has resolved, and `SteamDestination.sync()` flushes the files written since the last sync (by file index, so a handle closed meanwhile is still flushed), putting them back if the sync fails. A Steam download saved with a resumable error is synced too.
+2. **Saved progress is one byte per chunk:** 0 for not done, otherwise 1 + the index of the network that delivered it in a saved list of network ids. Restore can credit each network exactly. It is base64 in a `steam` field of `manifest.json`.
+3. **An existing folder is checked while planning** (`steamPrepare`), not during the run. The plan holds only the chunks still needed, so a running download's cells never change. A plan with nothing to fetch is refused ("Everything in this folder is already up to date."). `start()` checks again that the files that were checked have the same size and modification time.
+4. **Only one phase, `preparing`.** Each run starts by making sure of the install's folders, files (at full size, sparse), symlinks and executable bits (`SteamTransfer.checkFiles`). A file that is missing or the wrong size has its chunks marked not done, so they are fetched again; this needs no login. Only then does the run ask Steam for the depot keys and content servers. `publish()` refuses if a file with content has gone missing since, rather than make it empty.
+5. **Restore.** A Steam download restores as `completed` only when its recorded publication matches, which is set after the final sync. A crash before that restores it paused at 100 %, and the next run checks its files and publishes it. Its layout is worked out again from the manifests it saved (`steam-manifests.json.gz`), with every path checked again.
+6. **Deletion safety.** Plexo's cleanup of leftovers (`partialLeftovers`) removes any partial path ending in `.plexo`, or whose parent does, and older Plexo builds run it too. So:
+   - the install folder and the destination folder may never end in `.plexo`;
+   - `partialLeftovers` returns nothing for a Steam download;
+   - `SteamDestination.discard()` removes only the layout's own files (each checked with `lstat` through `ownedTorrentFiles`, never followed through a link), then the folders that leaves empty, deepest first;
+   - `discardLeftover()` does nothing.
+7. **Starting.** The Steam branch of `start()` comes before the destination folder is made: it takes the plan out of the planner (so a second click can't start it twice), checks the folder names and free space, saves the manifests, and claims the install folder last. A failure removes the download's own folder again.
+8. **What is saved** is `SteamRequestPayload`, never the plan id. The state carries `url: 'steam://app/<appId>'` and `adopted`.
+9. **IPC.** The handlers check every Steam argument at runtime, and pass every error through `redact()`.
+10. **The worker** is built with `?modulePath`; the main process reads the bundled file and starts `new Worker(source, { eval: true })`, which works inside the app archive. If no worker starts, chunks are checked on the main thread.
+11. **Phase order.** The IPC the e2e specs need moved into Phase 2.
 
 ## Findings that change the brief
 
@@ -126,6 +146,9 @@ export interface SteamStreamState {
   bytesDownloaded
   speedBytesPerSec
   currentCellIndex?
+  /** Bytes of the chunk it is fetching so far, and the chunk's size. */
+  chunkReceived?
+  chunkBytes?
   hedge?
 }
 export interface SteamDownloadNetwork extends DownloadNetworkBase {
@@ -144,9 +167,9 @@ export interface SteamDownloadState extends DownloadStateBase {
   depots: { depotId: number; manifestId: string; name: string }[]
   fileCount: number
   installBytes: number
-  folder: true
-  phase?: 'preparing' | 'verifying' | 'fetching' | 'finishing'
-  verify?: { checkedBytes: number; totalBytes: number }
+  /** Installed into a folder that was already there. */
+  adopted?: boolean
+  phase?: 'preparing'
   diskLimited?: boolean
 }
 export interface StartSteamDownloadRequest {
@@ -161,8 +184,6 @@ export interface SteamRequestPayload {
   branch
   depots: { depotId; manifestId }[]
   destinationDir
-  folderName
-  adopt: boolean
   interfaceIds
   streamsPerNetwork?
 } // what is saved; never a key or token
@@ -184,24 +205,24 @@ export type SteamLoginState =
 
 Steam-specific helpers live in `src/main/steam/runtime.ts`: `newSteamRuntime`, `restoreSteam`, `saveSteamProgress` and `steamHistoryEntry`. That keeps the manager change to explicit branches. Branches to change, from the explorer's map:
 
-| Where                                                                           | What changes                                                                                                                                                                                                                     |
-| ------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `DownloadRuntime` (108-118), `PersistedState` (130-136)                         | Add the Steam member.                                                                                                                                                                                                            |
-| `savedRequest` (165-176)                                                        | Plain payload.                                                                                                                                                                                                                   |
-| network factory (228-249)                                                       | `newSteamNetwork`.                                                                                                                                                                                                               |
-| `unitsOf` (255-256)                                                             | Explicit cells.                                                                                                                                                                                                                  |
-| `httpDownloadsOn` (470-485)                                                     | Also counts Steam downloads on Auto, so they share a network's streams with HTTP. Unchanged when no Steam download runs.                                                                                                         |
-| `newHttpRuntime`/`newTorrentRuntime` (553-613)                                  | Gain a Steam sibling.                                                                                                                                                                                                            |
-| `moveToHistory` (689-708)                                                       | `unitsWritten` = chunks, and `adopt` is kept.                                                                                                                                                                                    |
-| `restoreOne` (743-869)                                                          | A Steam branch: load `steam-layout.json.gz` from the download folder (validated again), the done bitset and the cell progress. Files missing or the wrong size mark their chunks as not done.                                    |
-| `listDownloads` (889-895), `takeUpdate` (1902-1911), `changedUnits` (1923-1931) | Send `{cells}`.                                                                                                                                                                                                                  |
-| `start` (898-1012)                                                              | A `kind === 'steam'` branch before the HTTP else: take the plan by `planId`, `ensureDiskSpace(installBytes - present)`, `claimDestinationPath(dir, installdir, true)` unless adopting, write the layout file, `newSteamRuntime`. |
-| `pause` (1057-1070), `begin` (1291-1302), `cancelRuntime` (1510)                | Stream status, as HTTP.                                                                                                                                                                                                          |
-| `relink` (1093), `failedMatch` (1185), torrent-only calls                       | Unchanged: they already refuse others.                                                                                                                                                                                           |
-| `remove` (1551)                                                                 | Not adopted: trash the folder. Adopted: offer no trash, and nothing is deleted.                                                                                                                                                  |
-| `run` (1635, 1733)                                                              | Not torrent-specific.                                                                                                                                                                                                            |
-| `reconcile` (1796-1817)                                                         | Keep a network that has streams, as HTTP does.                                                                                                                                                                                   |
-| `persistNow` (1972-1982)                                                        | Strips cells and streams, and writes a `steam` field: a base64 done bitset over the chunks synced so far, plus `SavedBlocks` over the cells.                                                                                     |
+| Where                                                                           | What changes                                                                                                                                                                                                                |
+| ------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `DownloadRuntime` (108-118), `PersistedState` (130-136)                         | Add the Steam member.                                                                                                                                                                                                       |
+| `savedRequest` (165-176)                                                        | Plain payload.                                                                                                                                                                                                              |
+| network factory (228-249)                                                       | `newSteamNetwork`.                                                                                                                                                                                                          |
+| `unitsOf` (255-256)                                                             | Explicit cells.                                                                                                                                                                                                             |
+| `httpDownloadsOn` (470-485)                                                     | Also counts Steam downloads on Auto, so they share a network's streams with HTTP. Unchanged when no Steam download runs.                                                                                                    |
+| `newHttpRuntime`/`newTorrentRuntime` (553-613)                                  | Gain a Steam sibling.                                                                                                                                                                                                       |
+| `moveToHistory` (689-708)                                                       | `unitsWritten` = chunks, and `adopt` is kept.                                                                                                                                                                               |
+| `restoreOne` (743-869)                                                          | A Steam branch: read `steam-manifests.json.gz` from the download folder, work the layout out again (every path checked), and take up the saved chunks if they fit. Per-file checks happen at the start of each run instead. |
+| `listDownloads` (889-895), `takeUpdate` (1902-1911), `changedUnits` (1923-1931) | Send `{cells}`.                                                                                                                                                                                                             |
+| `start` (898-1012)                                                              | A `kind === 'steam'` branch before the destination folder is made: take the plan, `ensureDiskSpace(installBytes - present)`, save the manifests, `claimDestinationPath(dir, installdir, true)` unless adopting.             |
+| `pause` (1057-1070), `begin` (1291-1302), `cancelRuntime` (1510)                | Stream status, as HTTP.                                                                                                                                                                                                     |
+| `relink` (1093), `failedMatch` (1185), torrent-only calls                       | Unchanged: they already refuse others.                                                                                                                                                                                      |
+| `remove` (1551)                                                                 | Not adopted: trash the folder. Adopted: offer no trash, and nothing is deleted.                                                                                                                                             |
+| `run` (1635, 1733)                                                              | Not torrent-specific.                                                                                                                                                                                                       |
+| `reconcile` (1796-1817)                                                         | Keep a network that has streams, as HTTP does.                                                                                                                                                                              |
+| `persistNow` (1972-1982)                                                        | Strips cells and streams, and writes a `steam` field: the chunks done (see "Changes after review"), the files it created, and the units it fetches when that isn't all of them.                                             |
 
 Also changed:
 
@@ -220,7 +241,7 @@ It follows `HttpTransfer`'s structure:
 - **Failures** are handled like `finishFailed`. Connection errors retry while the network exists. Transient statuses (429/5xx) are waited out with `Retry-After` honoured per network and server (the `holdUntil` pattern). 401/403 means the token is refreshed once, and the server is switched after that. 404 means another server.
 - **Network status.** A silent network becomes `unreachable` and keeps one stream trying. Repeated refusals make it `failed` via `host.failNetwork`.
 - **Tail hedging only:** at most 1 hedge per chunk, at the end.
-- **Run phases.** `preparing` creates folders and pre-allocates files (`markSparse` on Windows, then `ftruncate`). `verifying` runs only when adopting an existing folder. `fetching` downloads. `finishing` creates symlinks, sets executable bits and syncs.
+- **Each run** first makes sure of the install's folders, files (`ftruncate`, `markSparse` on Windows), symlinks and executable bits, and forgets the chunks of any file that went missing (the `preparing` phase). Then it asks Steam for the depot keys and content servers, and only then do its streams start.
 
 ### Scheduler: Steam-specific, same rules
 
@@ -265,18 +286,15 @@ It works from a cursor plus a requeue ring, so a pick costs O(1) amortised. The 
 - **Sizes** are uint64; anything above `Number.MAX_SAFE_INTEGER` is refused.
 - **Multi-depot.** When two selected depots contain the same path, the depot later in appinfo order wins.
 - **Dedup.** One unit is one unique chunk SHA per depot, with one or more write targets. It is fetched once and written to all of them.
-- **Durable progress without a race.** `SteamDestination.sync()` first takes the chunks written since the last sync and the files they touched. It then fsyncs those files, and only then promotes those chunks to the durable set. The saved bitset is the durable set alone.
-  - The HTTP and torrent checkpoints have a small window where a unit finished during `sync()` is saved before its file is flushed.
-  - Not-done chunks are always fetched again and overwritten.
-  - So resuming after a crash needs no verification pass.
-- **Verify and repair.** This is only for installing over an existing folder, and is an explicit choice in the dialog. The `verifying` phase reads each chunk's ranges and checks their SHA-1s in the worker pool. Then the cells are re-planned over the chunks still needed, which means one full snapshot to the window. Chunks already correct never count as downloaded, and are never credited to any network.
+- **Progress that survives a crash.** A checkpoint takes its snapshot of the chunks done, then syncs the files written since the last one, then saves the snapshot. A chunk is in the snapshot only once all its writes have resolved, so a saved chunk is on disk. Chunks not saved as done are fetched again and overwritten, so resuming after a crash needs no checking pass.
+- **Installing over an existing folder.** An explicit choice in the dialog. While planning, every chunk's ranges are read back and checked against their SHA-1s; the plan then holds only the chunks still needed. Chunks already correct never count as downloaded, and are never credited to any network.
 - **Cancel and remove.**
   - A fresh folder is ours: cancel removes it entirely.
   - An adopted folder: we delete only the files this download created, kept in a persisted list. Nothing that was there before is touched.
 - **Free space.** Shown in the dialog, and enforced at start through `ensureDiskSpace`.
 - **Persisted per download** in `<userData>/downloads/<id>/`:
   - `manifest.json`: version 7, with the Steam state and progress.
-  - `steam-layout.json.gz`: the decrypted, validated layout, so a restart can list a paused download without logging in.
+  - `steam-manifests.json.gz`: the depots' manifests as read and decrypted (file names, sizes, flags and chunk lists; nothing secret), so a restart can list a paused download and work its layout out again without logging in.
   - Never a depot key or token. Keys are asked for again each session.
 
 ## Credentials and privacy
