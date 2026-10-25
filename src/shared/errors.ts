@@ -67,6 +67,20 @@ const ERROR_HINTS: Array<{ pattern: RegExp; message: string }> = [
     pattern: /Invalid URL|ERR_INVALID_URL/,
     message: 'That doesn’t look like a valid link.'
   },
+  // steam-user's errors are often bare EResult names.
+  {
+    pattern: /^(RateLimitExceeded|AccountLoginDeniedThrottle)$/,
+    message:
+      'Steam is turning away requests from this computer for now. Try again in a few minutes.'
+  },
+  {
+    pattern: /^(ServiceUnavailable|TryAnotherCM|Busy|NoConnection)$/,
+    message: 'Steam isn’t answering right now. Try again in a few minutes.'
+  },
+  {
+    pattern: /^(InvalidPassword|AccessDenied)$/,
+    message: 'Steam turned this down. Check the account, and that it owns this game.'
+  },
   {
     pattern: /Server responded with status 401/,
     message: 'This link requires authentication. Try a direct download link.'

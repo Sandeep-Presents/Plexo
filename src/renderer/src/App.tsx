@@ -3,11 +3,13 @@ import { DownloadActionsProvider } from './components/DownloadActionsProvider'
 import { NetworkBindingDialog } from './components/NetworkBindingDialog'
 import { NewDownloadDialog } from './components/NewDownloadDialog'
 import { StatusBar } from './components/StatusBar'
+import { SteamDialog } from './components/steam/SteamDialog'
 import { TitleBar } from './components/TitleBar'
 import { TooltipProvider } from './components/ui/tooltip'
 import { useDownloadEvents } from './hooks/useDownloadEvents'
 import { useNetworkEvents } from './hooks/useNetworks'
 import { useNewDownloadShortcuts, useOpenedLinks } from './hooks/useOpenedLinks'
+import { useSteamEvents } from './hooks/useSteamEvents'
 import { CompleteScreen } from './screens/CompleteScreen'
 import { DownloadingScreen } from './screens/DownloadingScreen'
 import { DownloadsScreen } from './screens/DownloadsScreen'
@@ -57,6 +59,7 @@ function App(): React.JSX.Element {
   useOpenedLinks()
   useNewDownloadShortcuts()
   useNetworkEvents()
+  useSteamEvents()
 
   return (
     <TooltipProvider>
@@ -68,6 +71,7 @@ function App(): React.JSX.Element {
           </div>
           <StatusBar />
           <NewDownloadDialog />
+          <SteamDialog />
           <NetworkBindingDialog />
         </div>
       </DownloadActionsProvider>

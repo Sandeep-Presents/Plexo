@@ -1,6 +1,9 @@
 // What the window is told about Steam: who is logged in, what they own, and what an app is made
 // of. Nothing here is a secret — never a password, token, code or depot key (see main/steam).
 
+/** What a Steam download or request says when it needs a login: the window offers one. */
+export const STEAM_LOGIN_REQUIRED = 'Log in to Steam to continue.'
+
 export type SteamOs = 'windows' | 'macos' | 'linux'
 export type SteamArch = '32' | '64'
 

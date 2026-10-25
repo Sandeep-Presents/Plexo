@@ -206,6 +206,8 @@ export class SteamOrigin {
   readonly log: LoggedSteamRequest[] = []
   /** The refresh tokens handed out: what must never reach the window, a log or a file. */
   readonly refreshTokens: string[] = []
+  /** Every manifest request code and CDN token handed out, which must not either. */
+  readonly grants: string[] = []
   readonly manifests = new Map<number, FixtureManifest>()
   private readonly chunks = new Map<string, FixtureChunk>()
   private readonly attempts = new Map<string, Attempt>()
@@ -500,6 +502,7 @@ export class SteamOrigin {
     if (path === '/cm/requestcode') {
       const code = String(BigInt.asUintN(64, randomBytes(8).readBigUInt64LE()))
       this.requestCodes.add(`${param('depot')}/${param('manifest')}/${code}`)
+      this.grants.push(code)
       return send({ code })
     }
     if (path === '/cm/servers') {
@@ -514,6 +517,7 @@ export class SteamOrigin {
     if (path === '/cm/token') {
       const token = `token=${randomBytes(16).toString('hex')}`
       this.cdnTokens.add(token)
+      this.grants.push(token)
       return send({ token, expiresAt: Date.now() + 3600_000 })
     }
     refuse('Unknown request', 2)

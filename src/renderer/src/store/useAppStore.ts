@@ -1,4 +1,5 @@
 import { applyDownloadUpdate } from '@shared/downloadUpdate'
+import type { SteamLoginState } from '@shared/steam'
 import type {
   AppSettings,
   DownloadSchedule,
@@ -44,6 +45,10 @@ interface AppStore {
   downloadSchedule: DownloadSchedule | undefined
   /** The New download dialog, over whatever the window shows. */
   newDownloadOpen: boolean
+  /** The Steam dialog, over whatever the window shows; with an app, opened on that app. */
+  steam: { open: boolean; appId?: number }
+  /** The Steam login as main last said; null until the Steam dialog first asks. */
+  steamLogin: SteamLoginState | null
   /** Persisted — how many downloads run at once; the rest wait in the queue. */
   downloadsAtOnce: number
   /** Persisted — the speed limits (see AppSettings). */
@@ -82,6 +87,9 @@ interface AppStore {
   /** Opens New download, with `link` in its link field when one is given. */
   openNewDownload: (link?: string) => void
   closeNewDownload: () => void
+  openSteam: (appId?: number) => void
+  closeSteam: () => void
+  receiveSteamLogin: (state: SteamLoginState) => void
   receiveLinks: () => Promise<void>
   showLink: (id: string) => void
   /** If it was the one shown, the newest left is shown, or New download closes. */
@@ -128,6 +136,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
   setDownloadFilter: (downloadFilter) => set({ downloadFilter }),
   downloadSchedule: initial.downloadSchedule,
   newDownloadOpen: false,
+  steam: { open: false },
+  steamLogin: null,
   downloadsAtOnce: initial.downloadsAtOnce,
   speedLimit: initial.speedLimit,
   slowMode: initial.slowMode,
@@ -206,6 +216,10 @@ export const useAppStore = create<AppStore>((set, get) => ({
     if (links.length > 0) return get().showLink(links[links.length - 1].id)
     set({ newDownloadOpen: false })
   },
+
+  openSteam: (appId) => set({ steam: { open: true, appId } }),
+  closeSteam: () => set({ steam: { open: false } }),
+  receiveSteamLogin: (steamLogin) => set({ steamLogin }),
 
   receiveLinks: async () => {
     // main lists every link still waiting, so a window that was closed or reloaded gets them back.

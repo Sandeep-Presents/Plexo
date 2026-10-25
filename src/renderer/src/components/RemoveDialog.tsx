@@ -73,6 +73,7 @@ function RemoveDialogBody({
   const one = count === 1
   const anyFailed = items.some(isFailed)
   const anyFinished = items.some(isDone)
+  const games = items.length > 0 && items.every((item) => item.kind === 'steam')
 
   let title: string
   let description: string
@@ -81,14 +82,25 @@ function RemoveDialogBody({
   let destructive = true
   if (mode === 'cancel') {
     title = one ? 'Cancel download?' : `Cancel ${count} downloads?`
-    description = 'The part already downloaded will be deleted.'
+    description = games
+      ? 'What it installed so far will be deleted. Anything else in its folder stays.'
+      : 'The part already downloaded will be deleted.'
     confirm = one ? 'Cancel download' : 'Cancel downloads'
     dismiss = 'Keep'
   } else if (mode === 'trash') {
     // Said as what it comes to: the file is deleted, into the Trash.
-    title = one ? 'Delete file?' : `Delete ${count} files?`
-    description = `The ${one ? 'file' : 'files'} will be moved to the ${TRASH_NAME}.`
-    confirm = one ? 'Delete file' : 'Delete files'
+    // A game goes as uninstalling it would: its whole folder, saves and all.
+    title = games
+      ? one
+        ? 'Delete game?'
+        : `Delete ${count} games?`
+      : one
+        ? 'Delete file?'
+        : `Delete ${count} files?`
+    description = games
+      ? `The install ${one ? 'folder' : 'folders'} will be moved to the ${TRASH_NAME}, with anything the game saved there.`
+      : `The ${one ? 'file' : 'files'} will be moved to the ${TRASH_NAME}.`
+    confirm = games ? (one ? 'Delete game' : 'Delete games') : one ? 'Delete file' : 'Delete files'
   } else {
     title = clearAll
       ? 'Clear finished list?'

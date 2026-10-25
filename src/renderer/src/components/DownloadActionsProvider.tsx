@@ -19,6 +19,7 @@ export function DownloadActionsProvider({
 }): React.JSX.Element {
   const setView = useAppStore((store) => store.setView)
   const openNewDownload = useAppStore((store) => store.openNewDownload)
+  const openSteam = useAppStore((store) => store.openSteam)
   const [confirmation, setConfirmation] = useState<{
     mode: RemoveMode
     items: DownloadItem[]
@@ -64,7 +65,9 @@ export function DownloadActionsProvider({
           }
           useAppStore.getState().forgetDownload(item.id)
           setView({ name: 'list' })
-          openNewDownload(item.url)
+          // A Steam game has no link: it starts over from its own page in the Steam dialog.
+          if (item.kind === 'steam') openSteam(item.app.appId)
+          else openNewDownload(item.url)
           return true
         }
         case 'open':
@@ -97,7 +100,7 @@ export function DownloadActionsProvider({
           return true
       }
     },
-    [setView, openNewDownload]
+    [setView, openNewDownload, openSteam]
   )
 
   const askClearFinished = useCallback((): void => {

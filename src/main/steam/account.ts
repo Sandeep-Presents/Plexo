@@ -2,7 +2,11 @@ import { rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { app, safeStorage } from 'electron'
 import qrcode from 'qrcode-generator'
-import type { SteamLoginRequest, SteamLoginState } from '../../shared/steam'
+import {
+  STEAM_LOGIN_REQUIRED,
+  type SteamLoginRequest,
+  type SteamLoginState
+} from '../../shared/steam'
 import { readJson, updateJson } from '../jsonFile'
 import {
   type LoginAttempt,
@@ -31,7 +35,7 @@ interface StoredLogin {
 /** Thrown when a Steam download or request needs a login and there is none. */
 export class SteamLoginRequiredError extends Error {
   constructor() {
-    super('Log in to Steam to continue.')
+    super(STEAM_LOGIN_REQUIRED)
   }
 }
 

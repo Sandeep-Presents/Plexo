@@ -4,7 +4,7 @@
 
 Plexo speeds up one download by spreading its chunks across several networks: Wi-Fi, Ethernet, a tethered phone. It handles HTTP links and torrents today. This plan adds a third kind, **Steam**. The depot chunks of a game the account owns are fetched over every selected network in parallel. Each request uses Plexo's own pinned connections and is counted through `Limits`. Each chunk is decrypted, decompressed and checked against the manifest before anything is written.
 
-Status: Phases 1 and 2 are built: the protocol layer and the download itself, tested end to end against a fake Steam (`e2e/steamOrigin.ts`). This document describes what was built; where the first draft differed after review, the corrections are listed under "Changes after review" and the sections below say what is done now. Each phase ends with lint, typecheck, format:check, smoke tests, a commit and a report.
+Status: Phases 1 to 3 are built: the protocol layer, the download itself, and the Steam dialog, tested end to end against a fake Steam (`e2e/steamOrigin.ts`). Nothing has been run against real Steam yet (see "Risks, and what needs a real Steam account"). This document describes what was built; where the first draft differed after review, the corrections are listed under "Changes after review" and the sections below say what is done now. Each phase ends with lint, typecheck, format:check, smoke tests, a commit and a report.
 
 **Decisions made with the maintainer:**
 
@@ -335,7 +335,7 @@ Every handler checks its arguments at runtime: integers, string lengths, branch 
 
 ## UI plan
 
-- **Entry point:** a "Steam" button in the Downloads screen header, beside New download. It opens a dedicated `SteamDialog` (store flag `steamOpen`), sized like LimitsDialog.
+- **Entry point:** a "Steam" button in the Downloads screen header, beside New download. It opens a dedicated `SteamDialog` (store field `steam`, which can also open it on one app), 720px wide. Opening it is the first time the window asks for the login state, which is what logs in with a remembered login: Plexo doesn't contact Steam at launch.
 - **Login step:**
   - Password and QR code side by side, chosen with a ToggleGroup.
   - Guard code entry for email or the mobile authenticator, or "Approve on your phone".
@@ -347,15 +347,18 @@ Every handler checks its arguments at runtime: integers, string lengths, branch 
   - Branch, then OS, architecture and language filters, then a depot checklist with the defaults pre-ticked. DLC and shared depots are labelled.
   - Download and install sizes, free space, a "Save to" folder with Change.
   - An option to install over an existing folder (verify and repair).
-  - Network chips. NewDownloadDialog's chips are extracted only if that is a pure move with no behaviour change; otherwise this is a small copy.
-  - "Getting file lists 2/3" progress, then the download starts and its downloading screen opens.
+  - Network chips: a small copy of NewDownloadDialog's, since extracting them would have changed that dialog (its single-stream rules don't apply to Steam).
+  - "Fetching file lists: 2 of 3 depots" progress, then the download starts and its downloading screen opens. The plan's warnings (long Windows paths, symlinks on Windows) are shown first, with "Download anyway".
+  - The depot choice is worked out by `shared/steamSelection.ts`, the same code the main process checks it with.
 - **Existing screens:**
   - A `SteamBadge`.
   - Streams shown with `HttpStreamRows`, including their host.
   - BlockGrid over cells, with the unit label "part". Cells keep the screen bounded however big the game is.
   - Phase lines: "Preparing files…", "Checking existing files 12%".
   - The Complete screen counts "chunks".
-  - The Error screen gives no "Copy link".
+  - The Error screen gives no "Copy link". A download stopped for want of a login offers "Log in to Steam", which opens the dialog; Retry then resumes it.
+  - "Download again" on a Steam download opens the Steam dialog on that game.
+  - Cancel and Move to Trash say what they do to a game: a cancel removes only what it installed; the Trash takes the whole install folder, with anything the game saved there.
   - Every "not http means torrent" ternary is made explicit.
 - **Error messages** cover: not owned or refused, region-restricted, rate limited, login expired ("Log in to Steam to continue", resumable), password branch, disk full, damaged chunk.
 

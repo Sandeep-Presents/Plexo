@@ -4,9 +4,15 @@ import type {
   SteamBranch,
   SteamDepot,
   SteamDepotManifest,
-  SteamOs,
-  SteamSelection
+  SteamOs
 } from '../../shared/steam'
+import {
+  defaultDepots,
+  defaultLanguage,
+  depotUnavailable,
+  manifestFor,
+  steamSystem
+} from '../../shared/steamSelection'
 
 // An app's PICS appinfo, as steam-user hands it over: Valve's KeyValues text, parsed into nested
 // objects of strings. Its shape isn't documented and has changed over the years (a manifest id
@@ -151,47 +157,13 @@ export function readAppInfo(appId: number, appinfo: unknown): SteamAppDetails {
   }
 }
 
-/** The manifest a depot installs on `branch`, if it has one for it. */
-export function manifestFor(depot: SteamDepot, branch: string): SteamDepotManifest | undefined {
-  return depot.manifests[branch]
-}
-
-/** Why a depot can't be downloaded on `branch`, or null when it can. */
-export function depotUnavailable(depot: SteamDepot, branch: string): string | null {
-  if (!depot.owned) return 'Not owned by this account'
-  if (depot.encryptedBranches.includes(branch) && !depot.manifests[branch]) {
-    return 'Password-protected branches aren’t supported'
-  }
-  if (!manifestFor(depot, branch)) return 'Not part of this branch'
-  return null
-}
-
-/**
- * The depots Steam itself would install for `selection`: owned, on the branch, for this system,
- * architecture and language (or for any), without low-violence versions unless asked for, and
- * without shared redistributables, which Steam installs on its own.
- */
-export function defaultDepots(details: SteamAppDetails, selection: SteamSelection): number[] {
-  return details.depots
-    .filter((depot) => depotUnavailable(depot, selection.branch) === null)
-    .filter((depot) => depot.oslist.length === 0 || depot.oslist.includes(selection.os))
-    .filter((depot) => !depot.osarch || depot.osarch === selection.arch)
-    .filter((depot) => !depot.language || depot.language === selection.language)
-    .filter((depot) => !depot.lowViolence || selection.lowViolence === true)
-    .filter((depot) => !depot.sharedInstall && depot.sharedFrom === undefined)
-    .map((depot) => depot.depotId)
-}
-
-/** The language to start with: English, else whichever comes first. */
-export function defaultLanguage(details: SteamAppDetails): string {
-  return details.languages.includes('english') ? 'english' : (details.languages[0] ?? 'english')
-}
+// The choice of depots is worked out in the window too, so it lives in shared/.
+export { defaultDepots, defaultLanguage, depotUnavailable, manifestFor }
 
 /** This computer, as Steam names systems and architectures. */
 export function currentSystem(
   platform: NodeJS.Platform = process.platform,
   arch: string = process.arch
 ): { os: SteamOs; arch: SteamArch } {
-  const os: SteamOs = platform === 'win32' ? 'windows' : platform === 'darwin' ? 'macos' : 'linux'
-  return { os, arch: arch === 'ia32' || arch === 'arm' ? '32' : '64' }
+  return steamSystem(platform, arch)
 }

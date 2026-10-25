@@ -91,6 +91,7 @@ export function DownloadsScreen(): React.JSX.Element {
   const history = useAppStore((store) => store.history)
   const setView = useAppStore((store) => store.setView)
   const openNewDownload = useAppStore((store) => store.openNewDownload)
+  const openSteam = useAppStore((store) => store.openSteam)
   const filter = useAppStore((store) => store.downloadFilter)
   const setFilter = useAppStore((store) => store.setDownloadFilter)
   const [selected, setSelected] = useState<Set<string>>(new Set())
@@ -209,6 +210,9 @@ export function DownloadsScreen(): React.JSX.Element {
               setLimitsOpen(true)
             }}
           />
+          <Button type="button" variant="secondary" onClick={() => openSteam()}>
+            Steam
+          </Button>
           <Button type="button" onClick={() => openNewDownload()}>
             <Plus data-icon="inline-start" />
             New download
