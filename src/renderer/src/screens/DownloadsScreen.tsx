@@ -1,5 +1,5 @@
 import type { DownloadState, FinishedDownload } from '@shared/types'
-import { ChevronRight, Plus, X } from 'lucide-react'
+import { ChevronRight, Gamepad2, X } from 'lucide-react'
 import { cn } from 'cn'
 import { Fragment, memo, useCallback, useEffect, useState } from 'react'
 import { DownloadContextMenu } from '../components/DownloadContextMenu'
@@ -14,23 +14,12 @@ import { networkStatusText } from '../components/NetworkRow'
 import { scheduleMessage, scheduleWindow } from '@shared/downloadSchedule'
 import { NetworksMenu } from '../components/NetworksMenu'
 import { SteamBadge } from '../components/SteamBadge'
-import { TorrentBadge } from '../components/TorrentBadge'
 import { Button } from '../components/ui/button'
 import { Checkbox } from '../components/ui/checkbox'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../components/ui/tooltip'
 import { useNetworkVisuals, type ResolveNetworkVisual } from '../hooks/useNetworkVisuals'
 import { useAppStore, type DownloadFilter } from '../store/useAppStore'
-import {
-  describeError,
-  fileExtensionBadge,
-  formatBytes,
-  formatEta,
-  formatPercent,
-  formatWhen,
-  isFolder,
-  sourceOf,
-  wantedBytes
-} from '../utils/format'
+import { describeError, formatBytes, formatEta, formatPercent, formatWhen } from '../utils/format'
 import { useFormatSpeed } from '../hooks/useFormatSpeed'
 import {
   availableActions,
@@ -90,7 +79,6 @@ export function DownloadsScreen(): React.JSX.Element {
   const downloadsById = useAppStore((store) => store.downloads)
   const history = useAppStore((store) => store.history)
   const setView = useAppStore((store) => store.setView)
-  const openNewDownload = useAppStore((store) => store.openNewDownload)
   const openSteam = useAppStore((store) => store.openSteam)
   const filter = useAppStore((store) => store.downloadFilter)
   const setFilter = useAppStore((store) => store.setDownloadFilter)
@@ -210,12 +198,8 @@ export function DownloadsScreen(): React.JSX.Element {
               setLimitsOpen(true)
             }}
           />
-          <Button type="button" variant="secondary" onClick={() => openSteam()}>
+          <Button type="button" onClick={() => openSteam()}>
             Steam
-          </Button>
-          <Button type="button" onClick={() => openNewDownload()}>
-            <Plus data-icon="inline-start" />
-            New download
           </Button>
         </div>
       ) : (
@@ -363,8 +347,6 @@ const PLACEHOLDER_NETWORKS = [
   { solid: 'var(--icon-muted)', label: 'USB' },
   { solid: 'var(--icon-muted)', label: 'Ethernet' }
 ]
-const PASTE_SHORTCUT = window.plexo.platform === 'darwin' ? '⌘V' : 'Ctrl+V'
-const NEW_SHORTCUT = window.plexo.platform === 'darwin' ? '⌘N' : 'Ctrl+N'
 
 /** Nothing listed yet: how to start one — or, with no network connected, how to get one. */
 function EmptyState(): React.JSX.Element {
@@ -372,7 +354,7 @@ function EmptyState(): React.JSX.Element {
     (store) => store.interfacesStatus === 'ready' && store.interfaces.length === 0
   )
   const loadInterfaces = useAppStore((store) => store.loadInterfaces)
-  const openNewDownload = useAppStore((store) => store.openNewDownload)
+  const openSteam = useAppStore((store) => store.openSteam)
 
   return (
     <div className="flex flex-col items-center gap-4 px-5 pt-16 pb-10 text-center">
@@ -401,12 +383,10 @@ function EmptyState(): React.JSX.Element {
         <>
           <div className="font-sans text-[16px] leading-[1.2] font-bold">No downloads yet</div>
           <div className="max-w-[380px] text-[12.5px] leading-[1.6] text-[var(--text-secondary)]">
-            Paste a link ({PASTE_SHORTCUT}) or drop a .torrent anywhere in this window.
+            Pick a game from your Steam library to install it over every network at once.
           </div>
-          <Button type="button" className="mt-1" onClick={() => openNewDownload()}>
-            <Plus data-icon="inline-start" />
-            New download
-            <span className="ml-1 font-mono text-[11px] opacity-70">{NEW_SHORTCUT}</span>
+          <Button type="button" className="mt-1" onClick={() => openSteam()}>
+            Open Steam library
           </Button>
         </>
       )}
@@ -452,8 +432,7 @@ const DownloadRow = memo(function DownloadRow({
   const schedule = useAppStore((store) => store.downloadSchedule)
   const [working, setWorking] = useState(false)
   const finished = isFinished(item) || item.status === 'completed'
-  const badge = isFolder(item) ? 'DIR' : fileExtensionBadge(item.fileName)
-  const wanted = wantedBytes(item)
+  const wanted = item.totalBytes
   const percent = formatPercent(item.bytesDownloaded, wanted)
 
   let detail: string
@@ -461,8 +440,6 @@ const DownloadRow = memo(function DownloadRow({
   if (isFinished(item) || item.status === 'completed') {
     detail = [
       formatBytes(wanted || item.bytesDownloaded),
-      // A torrent's badge already says where it came from.
-      item.kind === 'http' && sourceOf(item.url),
       isFinished(item) && item.missing
         ? 'moved or deleted'
         : formatWhen(item.completedAt ?? now, now)
@@ -538,7 +515,7 @@ const DownloadRow = memo(function DownloadRow({
             state: !network.enabled
               ? 'Off'
               : network.status !== 'on'
-                ? networkStatusText(network.status, network.transfer)
+                ? networkStatusText(network.status)
                 : item.status === 'downloading'
                   ? formatSpeed(network.speedBytesPerSec)
                   : 'On'
@@ -571,15 +548,14 @@ const DownloadRow = memo(function DownloadRow({
         className="flex min-w-0 flex-1 items-center gap-3 rounded-md text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
         <div className="flex size-10 shrink-0 items-center justify-center rounded-lg border-[0.5px] border-border bg-card font-mono text-[10px] font-semibold text-muted-foreground">
-          {badge}
+          <Gamepad2 aria-hidden className="size-[18px]" />
         </div>
         <div className="flex min-w-0 flex-1 flex-col gap-1.5">
           <div className="flex min-w-0 items-center gap-2">
             <span className="truncate font-sans text-[14px] leading-tight font-medium">
               {item.fileName}
             </span>
-            {item.kind === 'torrent' && <TorrentBadge />}
-            {item.kind === 'steam' && <SteamBadge />}
+            <SteamBadge />
             {(dots || speed) && (
               <div className="ml-auto flex shrink-0 items-center gap-2.5 pl-2">
                 {dots && (

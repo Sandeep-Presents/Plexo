@@ -9,11 +9,8 @@ import { HeroBand } from '../components/HeroBand'
 import { NetworkRow } from '../components/NetworkRow'
 import { DetailHeader } from '../components/DetailHeader'
 import { ThroughputChart } from '../components/ThroughputChart'
-import { TorrentFiles } from '../components/TorrentFiles'
 import { SteamBadge } from '../components/SteamBadge'
-import { TorrentBadge } from '../components/TorrentBadge'
 import { TruncatedText } from '../components/TruncatedText'
-import { Button } from '../components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../components/ui/tooltip'
 import { useNetworkVisuals } from '../hooks/useNetworkVisuals'
 import { useDownloadSchedule } from '../hooks/useDownloadSchedule'
@@ -21,18 +18,14 @@ import { useAppStore } from '../store/useAppStore'
 import { KIND_PALETTE, NETWORK_ROW_GRID_COLUMNS } from '../theme'
 import {
   describeError,
-  describeFileCount,
   dirnameOf,
-  fileExtensionBadge,
   formatBytes,
   formatEta,
   formatPercent,
   groupByNetwork,
-  isFolder,
   networkActive,
   networksInPlay,
-  toDisplayPath,
-  wantedBytes
+  toDisplayPath
 } from '../utils/format'
 import { useFormatSpeed, useFormatSpeedLimit } from '../hooks/useFormatSpeed'
 
@@ -93,11 +86,7 @@ function waitingFor(download: DownloadState): string | null {
   const enabled = download.networks.filter((network) => network.enabled)
   if (enabled.some((network) => network.status === 'on')) return null
   if (enabled.some((network) => network.status === 'unreachable')) {
-    return download.kind === 'torrent'
-      ? 'Can’t reach peers. Retrying…'
-      : download.kind === 'steam'
-        ? 'Can’t reach Steam’s content servers. Retrying…'
-        : 'Can’t reach the server. Retrying…'
+    return 'Can’t reach Steam’s content servers. Retrying…'
   }
   return enabled.length > 0 && enabled.every((network) => network.status === 'limit')
     ? 'Every network in use has reached its data limit. Raise one in Speed & data limits.'
@@ -124,8 +113,7 @@ export const DownloadingScreen = memo(function DownloadingScreen({
   const isQueued = download.status === 'queued'
   // Waiting in the queue looks like a pause: nothing moves.
   const isPaused = download.status === 'paused' || isQueued
-  const isTorrent = download.kind === 'torrent'
-  const percent = formatPercent(download.bytesDownloaded, wantedBytes(download))
+  const percent = formatPercent(download.bytesDownloaded, download.totalBytes)
   const knownSize = download.totalBytes > 0
   const [now, setNow] = useState(() => Date.now())
 
@@ -135,7 +123,6 @@ export const DownloadingScreen = memo(function DownloadingScreen({
     return () => clearInterval(interval)
   }, [isPaused])
 
-  const [filesOpen, setFilesOpen] = useState(false)
   useEffect(() => {
     if (isPaused) {
       const label = isQueued ? 'Queued' : 'Paused'
@@ -172,9 +159,7 @@ export const DownloadingScreen = memo(function DownloadingScreen({
   const waiting = waitingFor(download)
 
   const totalRetries = rows.reduce((sum, row) => sum + row.retries, 0)
-  const remainingBytes = knownSize
-    ? Math.max(0, wantedBytes(download) - download.bytesDownloaded)
-    : 0
+  const remainingBytes = knownSize ? Math.max(0, download.totalBytes - download.bytesDownloaded) : 0
 
   const avgSpeedBytesPerSec = elapsedSeconds > 0 ? download.bytesDownloaded / elapsedSeconds : 0
 
@@ -243,7 +228,6 @@ export const DownloadingScreen = memo(function DownloadingScreen({
                 valueClass={isPaused ? 'text-muted-foreground' : 'text-foreground'}
                 note={
                   !isPaused &&
-                  download.kind !== 'torrent' &&
                   download.diskLimited && (
                     <Tooltip>
                       <TooltipTrigger
@@ -323,11 +307,7 @@ export const DownloadingScreen = memo(function DownloadingScreen({
       <div className="shrink-0 p-[16px_20px_0px]">
         <div className="flex items-center gap-[14px]">
           <div className="flex size-11 shrink-0 items-center justify-center rounded-[10px] border-[0.5px] border-[var(--border-strong)] bg-card font-mono text-[10.5px] leading-none font-bold tracking-[0.04em] text-[var(--text-secondary)]">
-            {isFolder(download) ? (
-              <Folder aria-label="Folder" className="size-[18px]" />
-            ) : (
-              fileExtensionBadge(download.fileName)
-            )}
+            <Folder aria-label="Folder" className="size-[18px]" />
           </div>
           <div className="flex min-w-0 flex-1 flex-col gap-1.5">
             <div className="flex min-w-0 items-center gap-2">
@@ -335,13 +315,12 @@ export const DownloadingScreen = memo(function DownloadingScreen({
                 text={download.fileName}
                 className="font-sans text-[15px] leading-[1.3] font-semibold tracking-[-0.01em] text-foreground"
               />
-              {isTorrent && <TorrentBadge />}
-              {download.kind === 'steam' && <SteamBadge />}
+              <SteamBadge />
             </div>
             <div className="flex min-w-0 items-center gap-[7px] font-mono text-[12.5px] leading-[1.2] tabular-nums text-[var(--text-secondary)]">
               <span>
                 {formatBytes(download.bytesDownloaded)}
-                {knownSize ? ` of ${formatBytes(wantedBytes(download))}` : ''}
+                {knownSize ? ` of ${formatBytes(download.totalBytes)}` : ''}
               </span>
               {knownSize && (
                 <>
@@ -349,43 +328,12 @@ export const DownloadingScreen = memo(function DownloadingScreen({
                   <span className="font-semibold text-foreground">{percent}%</span>
                 </>
               )}
-              {isTorrent && (
-                <>
-                  <Dot />
-                  <span>
-                    {download.peers.length} {download.peers.length === 1 ? 'peer' : 'peers'}
-                  </span>
-                </>
-              )}
-              {download.kind === 'steam' && (
-                <>
-                  <Dot />
-                  <span>
-                    {download.phase === 'preparing'
-                      ? 'Preparing files…'
-                      : `${download.fileCount} ${download.fileCount === 1 ? 'file' : 'files'}`}
-                  </span>
-                </>
-              )}
-              {/* Several files: they open below. One is the name above. */}
-              {download.kind === 'torrent' && download.files.total > 1 && (
-                <>
-                  <Dot />
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="xs"
-                    onClick={() => setFilesOpen((open) => !open)}
-                    aria-expanded={filesOpen}
-                    className="h-auto cursor-default rounded-[4px] border-[0.5px] bg-card px-[7px] py-[3px] font-mono text-[10.5px] leading-none font-medium text-[var(--text-secondary)] aria-expanded:bg-secondary dark:bg-card"
-                  >
-                    {describeFileCount(download.files.chosen, download.files.total)}{' '}
-                    <span aria-hidden className="text-[7.5px] opacity-75">
-                      {filesOpen ? '▲' : '▼'}
-                    </span>
-                  </Button>
-                </>
-              )}
+              <Dot />
+              <span>
+                {download.phase === 'preparing'
+                  ? 'Preparing files…'
+                  : `${download.fileCount} ${download.fileCount === 1 ? 'file' : 'files'}`}
+              </span>
               {!isPaused && download.timeLeftSeconds !== undefined && (
                 <>
                   <Dot />
@@ -434,31 +382,17 @@ export const DownloadingScreen = memo(function DownloadingScreen({
             </div>
           </div>
         </div>
-        {download.kind === 'torrent' && filesOpen && (
-          <TorrentFiles
-            downloadId={download.id}
-            pieces={download.pieces}
-            selected={download.files.selected}
-          />
-        )}
       </div>
 
       {/* Block grid: pinned with the file info. It's capped in height and scrolls itself. */}
       <div className="shrink-0 px-5 pt-3">
         <BlockGrid
-          blocks={
-            download.kind === 'http'
-              ? download.blocks
-              : download.kind === 'steam'
-                ? download.cells
-                : download.pieces
-          }
+          blocks={download.cells}
           groups={groups}
           visuals={visuals}
           knownSize={knownSize}
           remainingBytes={remainingBytes}
           isPaused={isPaused}
-          unit={isTorrent ? 'Piece' : download.kind === 'steam' ? 'Part' : 'Chunk'}
         />
       </div>
 
@@ -479,25 +413,21 @@ export const DownloadingScreen = memo(function DownloadingScreen({
               <div role="columnheader" aria-label="Status" />
               <div role="columnheader">Network</div>
               <div role="columnheader">
-                {download.kind !== 'http' ? (
-                  <Tooltip>
-                    <TooltipTrigger
-                      render={
-                        <button
-                          type="button"
-                          className="rounded-sm text-inherit uppercase focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
-                        >
-                          Progress
-                        </button>
-                      }
-                    />
-                    <TooltipContent>
-                      Percentage of the download completed with verified data from this network.
-                    </TooltipContent>
-                  </Tooltip>
-                ) : (
-                  'Progress'
-                )}
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <button
+                        type="button"
+                        className="rounded-sm text-inherit uppercase focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+                      >
+                        Progress
+                      </button>
+                    }
+                  />
+                  <TooltipContent>
+                    Percentage of the download completed with verified data from this network.
+                  </TooltipContent>
+                </Tooltip>
               </div>
               <div role="columnheader" className="text-right">
                 Share
@@ -506,7 +436,7 @@ export const DownloadingScreen = memo(function DownloadingScreen({
                 Speed
               </div>
               <div role="columnheader" className="pr-5 text-right">
-                {isTorrent ? 'Transferred' : 'Downloaded'}
+                Downloaded
               </div>
             </div>
             {rows.map((row, index) => (
@@ -519,8 +449,7 @@ export const DownloadingScreen = memo(function DownloadingScreen({
                     ? (row.bytesDownloaded / totalDownloadedByNetworks) * 100
                     : 0
                 }
-                totalBytes={wantedBytes(download)}
-                blocks={download.kind === 'http' ? download.blocks : undefined}
+                totalBytes={download.totalBytes}
                 onSwitch={(enabled) =>
                   void window.plexo.setDownloadNetwork(download.id, row.id, enabled)
                 }

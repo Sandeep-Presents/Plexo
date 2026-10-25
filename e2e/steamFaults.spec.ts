@@ -1,4 +1,4 @@
-import { mkdir, open } from 'node:fs/promises'
+import { open } from 'node:fs/promises'
 import { join } from 'node:path'
 import { expect, expectSteam, test } from './fixtures'
 import { sha1 } from './steamContent'
@@ -171,26 +171,5 @@ test.describe('steam content server faults', () => {
     await plexo.loginSteam()
     await plexo.api.resumeDownload(id)
     await plexo.waitForSteamStatus('completed', 30_000)
-  })
-
-  test('an install folder or destination named .plexo is refused', async ({
-    plexo,
-    serveSteam
-  }) => {
-    // Plexo's cleanup of leftovers removes anything named .plexo outright: never an install.
-    const steam = await serveSteam({ ...syntheticApp(), installDir: 'Game.plexo' })
-    await plexo.loginSteam()
-    const prepare = (destinationDir: string): Promise<unknown> =>
-      plexo.api.steamPrepare({
-        appId: steam.app.appId,
-        branch: 'public',
-        depotIds: [4001],
-        destinationDir,
-        adopt: false
-      })
-    await expect(prepare(plexo.dirs.dest)).rejects.toThrow(/ending in \.plexo/)
-    const named = join(plexo.dirs.dest, 'games.plexo')
-    await mkdir(named)
-    await expect(prepare(named)).rejects.toThrow(/ending in \.plexo/)
   })
 })

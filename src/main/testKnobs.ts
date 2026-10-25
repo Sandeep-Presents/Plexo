@@ -15,27 +15,14 @@ export const testKnobs = {
   userDataDir: env['PLEXO_USER_DATA'],
   /** Keeps the window off-screen so a test run doesn't pop windows up over the desktop. */
   hideWindow: env['PLEXO_E2E_HIDE_WINDOW'] === '1',
-  blockBytes: positiveNumber('PLEXO_E2E_BLOCK_BYTES', 8 * 1024 * 1024),
   retryBaseDelayMs: positiveNumber('PLEXO_E2E_RETRY_BASE_MS', 1000),
   stallTimeoutMs: positiveNumber('PLEXO_E2E_STALL_MS', 20_000),
   connectTimeoutMs: positiveNumber('PLEXO_E2E_CONNECT_MS', 10_000),
   /** How long a server that keeps answering busy (429, 503, …) is waited out; see
-   * downloadManager.ts. */
+   * steam/steamTransfer.ts. */
   serverBusyForMs: positiveNumber('PLEXO_E2E_SERVER_BUSY_MS', 5 * 60_000),
-  slowWarmupMs: positiveNumber('PLEXO_E2E_SLOW_WARMUP_MS', 5_000),
-  slowForMs: positiveNumber('PLEXO_E2E_SLOW_FOR_MS', 10_000),
   silentAfterMs: positiveNumber('PLEXO_E2E_SILENT_MS', 5_000),
-  hedgeAfterMs: positiveNumber('PLEXO_E2E_HEDGE_MS', 2_000),
-  /** How long a magnet link may take to find peers that send its metadata. */
-  magnetTimeoutMs: positiveNumber('PLEXO_E2E_MAGNET_MS', 3 * 60_000),
-  /** How long a magnet link only the DHT can help keeps looking once its first search finds no
-   * one (Deluge's magnet prefetch also waits 30 s). */
-  magnetGraceMs: positiveNumber('PLEXO_E2E_MAGNET_GRACE_MS', 30_000),
-  /** Tests turn the DHT off, so a run never reaches out to the internet's DHT nodes. */
-  torrentDht: env['PLEXO_E2E_DHT'] !== '0',
-  /** `PLEXO_E2E_DHT_BOOTSTRAP=127.0.0.1:9` starts the DHT from these nodes instead of the
-   * internet's, so a test can have a DHT that reaches no one. */
-  torrentDhtBootstrap: env['PLEXO_E2E_DHT_BOOTSTRAP']?.split(',').filter(Boolean)
+  hedgeAfterMs: positiveNumber('PLEXO_E2E_HEDGE_MS', 2_000)
 }
 
 /** `PLEXO_E2E_STEAM=http://127.0.0.1:1234` stands a local fake in for Steam itself (see

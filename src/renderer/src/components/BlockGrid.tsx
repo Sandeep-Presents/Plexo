@@ -1,4 +1,4 @@
-import type { DownloadUnitState, TorrentPieceStatus } from '@shared/types'
+import type { CellStatus, DownloadUnitState } from '@shared/types'
 import { cn } from 'cn'
 import { ArrowDown, ArrowUp } from 'lucide-react'
 import { useCallback, useRef, useState } from 'react'
@@ -6,27 +6,19 @@ import type { NetworkVisual } from '../theme'
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip'
 import { formatBytes, type NetworkGroup } from '../utils/format'
 
-// The grid is a byte-space map of the file: one square per chunk, running left-to-right,
+// The grid is a byte-space map of the download: one square per part, running left-to-right,
 // top-to-bottom. Each square is drawn in exactly one network's color — a square reads as one
 // network's work, never as a gradient. Which network that is comes from per-network byte tallies
 // (see describeBlocks), so the winner is whoever truly moved the most bytes there, including when
-// a chunk changed hands mid-flight after a dropped connection or a pause/resume. Hovering reads
+// a part changed hands mid-flight after a dropped connection or a pause/resume. Hovering reads
 // out the exact split.
 //
-// Vocabulary is the same as the streams table's: a *chunk* is one real 8 MB unit the downloader
-// actually fetches (what NetworkRow labels "Chunk #N"), and every chunk gets its own square. No
-// grouping, no averaging — square #7 is chunk #7, so a hovered square points at exactly the work
-// one stream did and the two views can be read against each other directly.
+// A game is tens of thousands of depot chunks of about a megabyte, far too many to draw or send,
+// so a square is a "part": a run of chunks of about equal download bytes (see main/steam/cells.ts).
 //
-// A Steam download is the one exception: a game is tens of thousands of depot chunks of about a
-// megabyte, far too many to draw or send, so its squares are "parts", runs of chunks of about
-// equal download bytes (see main/steam/cells.ts), and a square no longer points at one stream's
-// work.
-//
-// A big file therefore makes a tall grid rather than a coarser one. Past MAX_VISIBLE_ROWS the
-// grid scrolls instead of growing without bound or shrinking its squares: keeping the squares at
-// a fixed size is what keeps them the same unit of meaning on every download, and the scroll
-// height is what a multi-gigabyte file's chunk count honestly looks like.
+// Past MAX_VISIBLE_ROWS the grid scrolls instead of growing without bound or shrinking its
+// squares: keeping the squares at a fixed size keeps them the same unit of meaning on every
+// download.
 const TARGET_CELL_PX = 12
 const CELL_GAP_PX = 3
 const CELL_HEIGHT_PX = 13
@@ -53,7 +45,7 @@ interface CellSegment {
 }
 
 interface DisplayCell {
-  status: TorrentPieceStatus
+  status: CellStatus
   /** The network that delivered the most bytes here — what the cell reads out as, and what
    * colors it when its share is drawn as a single block. */
   interfaceId?: string
@@ -64,9 +56,7 @@ interface DisplayCell {
   fillRatio: number
   totalBytes: number
   bytesDownloaded: number
-  provisionalBytes: number
-  /** 1-based chunk number, matching the "Chunk #N" badges in the streams table so a hovered
-   * square points back at a specific stream's work. */
+  /** 1-based part number. */
   chunkNumber: number
 }
 
@@ -113,19 +103,14 @@ function describeBlocks(
 
     return {
       status: block.status,
-      // Before any bytes land, a chunk in flight is still fairly labelled by the network that is
+      // Before any bytes land, a part in flight is still fairly labelled by the network that is
       // fetching it — but only then.
       interfaceId:
         dominantInterfaceId ?? (block.status === 'downloading' ? block.interfaceId : undefined),
       segments,
-      fillRatio:
-        totalBytes > 0
-          ? (block.bytesDownloaded + (block.kind === 'torrent' ? block.provisionalBytes : 0)) /
-            totalBytes
-          : 0,
+      fillRatio: totalBytes > 0 ? block.bytesDownloaded / totalBytes : 0,
       totalBytes,
       bytesDownloaded: block.bytesDownloaded,
-      provisionalBytes: block.kind === 'torrent' ? block.provisionalBytes : 0,
       chunkNumber: firstIndex + index + 1
     }
   })
@@ -165,9 +150,6 @@ interface BlockGridProps {
   knownSize: boolean
   remainingBytes: number
   isPaused?: boolean
-  /** What one square is: an HTTP download's chunk, a torrent's piece, a part of a Steam
-   * download's chunks. */
-  unit?: 'Chunk' | 'Piece' | 'Part'
 }
 
 export function BlockGrid({
@@ -176,8 +158,7 @@ export function BlockGrid({
   visuals,
   knownSize,
   remainingBytes,
-  isPaused = false,
-  unit = 'Chunk'
+  isPaused = false
 }: BlockGridProps): React.JSX.Element {
   const [gridWidth, setGridWidth] = useState(0)
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null)
@@ -216,9 +197,8 @@ export function BlockGrid({
       blocks[0].rangeEnd !== null ? blocks[0].rangeEnd - blocks[0].rangeStart + 1 : 0
     const rows = Math.ceil(blocks.length / cols)
     const visibleRows = Math.min(rows, MAX_VISIBLE_ROWS)
-    // Only the rows in view (and a few either side) are drawn: a big torrent has hundreds of
-    // thousands of pieces. Padding above and below stands in for the rest, so the scroll height
-    // is the whole file's.
+    // Only the rows in view (and a few either side) are drawn. Padding above and below stands in
+    // for the rest, so the scroll height is the whole download's.
     const rowStride = CELL_HEIGHT_PX + CELL_GAP_PX
     const startRow = Math.max(0, Math.floor(scrollTop / rowStride) - BUFFER_ROWS)
     const endRow = Math.min(rows, Math.floor(scrollTop / rowStride) + visibleRows + BUFFER_ROWS)
@@ -233,7 +213,7 @@ export function BlockGrid({
       visibleRows * CELL_HEIGHT_PX + (visibleRows - 1) * CELL_GAP_PX + GRID_INSET_PX * 2
 
     // The grid stays where it's scrolled: following the work moved it from under the reader, and
-    // a torrent's work is all over the file. When none of what's in flight is in view, a pill
+    // the work is spread over the whole download. When none of what's in flight is in view, a pill
     // points the way to the nearest of it, and goes there.
     const firstInView = Math.round(scrollTop / rowStride)
     const lastInView = firstInView + visibleRows - 1
@@ -269,18 +249,10 @@ export function BlockGrid({
     if (hoveredCell) {
       const where =
         describeContributors(hoveredCell, visualByInterfaceId) ??
-        (hoveredCell.status === 'pending'
-          ? 'queued'
-          : hoveredCell.status === 'skipped'
-            ? 'skipped: in no file chosen'
-            : '—')
-      const provisional =
-        hoveredCell.provisionalBytes > 0
-          ? ` · ${formatBytes(hoveredCell.provisionalBytes)} received, awaiting verification`
-          : ''
-      readout = `${unit} #${hoveredCell.chunkNumber} · ${formatBytes(hoveredCell.bytesDownloaded)} verified${provisional} / ${formatBytes(hoveredCell.totalBytes)} · ${where}`
+        (hoveredCell.status === 'pending' ? 'queued' : '—')
+      readout = `Part #${hoveredCell.chunkNumber} · ${formatBytes(hoveredCell.bytesDownloaded)} verified / ${formatBytes(hoveredCell.totalBytes)} · ${where}`
     } else {
-      readout = `${blocks.length} ${unit.toLowerCase()}s · ${formatBytes(chunkBytes)} each`
+      readout = `${blocks.length} parts · ${formatBytes(chunkBytes)} each`
     }
 
     return (
@@ -316,7 +288,7 @@ export function BlockGrid({
                   <button
                     type="button"
                     onClick={goToActive}
-                    aria-label={`Show the ${unit.toLowerCase()}s in progress`}
+                    aria-label="Show the parts in progress"
                     className={cn(
                       'absolute right-4 z-10 flex size-6 cursor-default items-center justify-center rounded-full border-[0.5px] border-[var(--border-strong)] bg-card text-[var(--text-secondary)] shadow-[0_2px_8px_rgba(0,0,0,0.18)] hover:text-foreground dark:shadow-[0_2px_8px_rgba(0,0,0,0.55)] focus-visible:outline-2 focus-visible:outline-ring',
                       nearestActive < firstInView ? '-top-1' : '-bottom-1'
@@ -330,7 +302,7 @@ export function BlockGrid({
                   </button>
                 }
               />
-              <TooltipContent>{`Show the ${unit.toLowerCase()}s in progress`}</TooltipContent>
+              <TooltipContent>Show the parts in progress</TooltipContent>
             </Tooltip>
           )}
           <div
@@ -383,15 +355,11 @@ export function BlockGrid({
                 } else if (cell.status === 'completed') {
                   border = 'none'
                   opacity = 0.92
-                } else if (cell.status === 'skipped') {
-                  // None of the files chosen needs it: there, but not this download's.
-                  border = '0.5px dashed var(--border-strong)'
-                  opacity = 0.3
                 }
 
                 const rawFillPercent = Math.min(1, Math.max(0, cell.fillRatio)) * 100
-                // A square is only ~12px wide, so the first bytes of a chunk round to nothing —
-                // floor a started chunk to a visible sliver rather than 0 width.
+                // A square is only ~12px wide, so the first bytes of a part round to nothing —
+                // floor a started part to a visible sliver rather than 0 width.
                 const fillPercent = rawFillPercent > 0 ? Math.max(6, Math.round(rawFillPercent)) : 0
 
                 return (
@@ -424,8 +392,6 @@ export function BlockGrid({
                           inset: 0,
                           width: `${fillPercent}%`,
                           background: fillColor,
-                          opacity:
-                            cell.provisionalBytes > 0 && cell.bytesDownloaded === 0 ? 0.55 : 1,
                           transition: 'width 0.15s, background 0.15s'
                         }}
                       />

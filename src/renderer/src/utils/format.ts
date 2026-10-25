@@ -1,15 +1,4 @@
-import type {
-  DownloadNetwork,
-  DownloadState,
-  FinishedDownload,
-  HttpDownloadNetwork,
-  HttpDownloadState,
-  SpeedUnit,
-  SteamDownloadNetwork,
-  SteamDownloadState,
-  TorrentDownloadNetwork,
-  TorrentDownloadState
-} from '@shared/types'
+import type { DownloadNetwork, DownloadState, SpeedUnit } from '@shared/types'
 
 const UNITS = ['B', 'KB', 'MB', 'GB', 'TB']
 
@@ -126,44 +115,12 @@ export function formatEta(seconds: number): string {
   return `${hrs}h ${remMins}m`
 }
 
-/** "3 files", or "2 of 4 files" when only some were chosen. */
-export function describeFileCount(chosen: number, total: number): string {
-  const files = `${total} ${total === 1 ? 'file' : 'files'}`
-  return chosen === total ? files : `${chosen} of ${files}`
-}
-
-/** A torrent file's path within the torrent's own folder, which every path starts with. */
-export function pathInTorrent(path: string): string {
-  return path.split(/[\\/]/).slice(1).join('/') || path
-}
-
-/** What a download fetches: all of it, bar a torrent's pieces no chosen file needs. */
-export function wantedBytes(download: DownloadState | FinishedDownload): number {
-  return download.totalBytes - (download.kind === 'torrent' ? download.skippedBytes : 0)
-}
-
 export function formatPercent(bytesDownloaded: number, totalBytes: number): number {
   if (totalBytes <= 0) return 0
   // 100% only once every byte is in: rounding 99.6% up would claim a 10 GB file was done with
   // 40 MB still to go.
   if (bytesDownloaded >= totalBytes) return 100
   return Math.min(99, Math.round((bytesDownloaded / totalBytes) * 100))
-}
-
-export function fileNameFromPath(path: string): string {
-  return path.split(/[\\/]/).pop() ?? path
-}
-
-/** Short uppercase file-type badge from a name's extension, e.g. "Xcode_16.2.xip" -> "XIP", "photo.jpeg" -> "JPEG". */
-/** A download that is a folder: a torrent's, of its files, or a Steam install. */
-export function isFolder(download: DownloadState | FinishedDownload): boolean {
-  return download.kind === 'steam' || (download.kind === 'torrent' && download.folder)
-}
-
-export function fileExtensionBadge(fileName: string): string {
-  const dotIndex = fileName.lastIndexOf('.')
-  if (dotIndex <= 0 || dotIndex === fileName.length - 1) return 'FILE'
-  return fileName.slice(dotIndex + 1, dotIndex + 5).toUpperCase()
 }
 
 /** When something happened, as a list shows it: "Just now", "12 min ago", "Today 08:55",
@@ -180,23 +137,6 @@ export function formatWhen(time: number, now: number): string {
   if (days === 0) return `Today ${clock}`
   if (days === 1) return `Yesterday ${clock}`
   return date.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })
-}
-
-/** What Plexo can download: a web link, a magnet link, or a .torrent file on this computer. */
-export function acceptedLink(text: string): string | null {
-  const link = text.trim()
-  if (/^(https?:\/\/|magnet:\?)/i.test(link)) return link
-  if (/^(\/|[a-z]:\\).*\.torrent$/i.test(link)) return link
-  return null
-}
-
-/** Where a link's download comes from, in a word: its host. */
-export function sourceOf(url: string): string {
-  try {
-    return new URL(url).host
-  } catch {
-    return url
-  }
 }
 
 /** m:ss, or h:mm:ss past an hour. */
@@ -217,36 +157,15 @@ export function dirnameOf(path: string): string {
   return path.slice(0, index)
 }
 
-export interface HttpNetworkGroup extends HttpDownloadNetwork {
-  streams: HttpDownloadState['streams']
+/** A network with the streams it carries. */
+export interface NetworkGroup extends DownloadNetwork {
+  streams: DownloadState['streams']
 }
-
-export interface TorrentNetworkGroup extends TorrentDownloadNetwork {
-  peers: TorrentDownloadState['peers']
-}
-
-export interface SteamNetworkGroup extends SteamDownloadNetwork {
-  streams: SteamDownloadState['streams']
-}
-
-export type NetworkGroup = HttpNetworkGroup | TorrentNetworkGroup | SteamNetworkGroup
 
 export function groupByNetwork(download: DownloadState): NetworkGroup[] {
-  if (download.kind === 'http') {
-    return download.networks.map((network) => ({
-      ...network,
-      streams: download.streams.filter((stream) => stream.interfaceId === network.id)
-    }))
-  }
-  if (download.kind === 'steam') {
-    return download.networks.map((network) => ({
-      ...network,
-      streams: download.streams.filter((stream) => stream.interfaceId === network.id)
-    }))
-  }
   return download.networks.map((network) => ({
     ...network,
-    peers: download.peers.filter((peer) => peer.interfaceId === network.id)
+    streams: download.streams.filter((stream) => stream.interfaceId === network.id)
   }))
 }
 
@@ -256,13 +175,11 @@ export function networksInPlay<T extends DownloadNetwork>(networks: T[]): T[] {
   return networks.filter((network) => network.enabled || network.bytesDownloaded > 0)
 }
 
-/** Whether a network is carrying bytes right now: an HTTP stream fetching, or a torrent peer
- * receiving. Read from connection status rather than speed, so every view of a download agrees
- * on which networks are live even between speed samples. */
+/** Whether a network is carrying bytes right now: one of its streams fetching. Read from stream
+ * status rather than speed, so every view of a download agrees on which networks are live even
+ * between speed samples. */
 export function networkActive(group: NetworkGroup): boolean {
-  return group.transfer === 'torrent'
-    ? group.peers.some((peer) => peer.status === 'receiving')
-    : group.streams.some((stream) => stream.status === 'downloading')
+  return group.streams.some((stream) => stream.status === 'downloading')
 }
 
 /** Shortens an absolute path under the user's home directory to a "~/..." form for display. */
@@ -282,17 +199,3 @@ export function toDisplayPath(path: string, homeDir: string): string {
 }
 
 export { describeError } from '@shared/errors'
-
-const LINK_REFUSED = /status (401|403|404|410|416) for range request/
-
-/** A download whose link the server now refuses: a fresh link to the same file picks it up.
- * 416 (Range Not Satisfiable) belongs here too: the server is saying the byte range this
- * download was resuming no longer exists, same as a 404/410 — retrying the same range would
- * just repeat the same 416 forever. */
-export function linkExpired(download: DownloadState): boolean {
-  return (
-    download.kind === 'http' &&
-    download.status === 'error' &&
-    LINK_REFUSED.test(download.error ?? '')
-  )
-}

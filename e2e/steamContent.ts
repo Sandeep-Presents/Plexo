@@ -80,6 +80,7 @@ export function compressChunk(data: Buffer, how: Compression): Buffer {
 }
 
 export const sha1 = (data: Buffer): Buffer => createHash('sha1').update(data).digest()
+export const sha256 = (data: Buffer): string => createHash('sha256').update(data).digest('hex')
 
 /** A chunk as a content server sends it. */
 export function encodeChunk(data: Buffer, key: Buffer, how: Compression): Buffer {

@@ -1,19 +1,12 @@
 import { expect, test } from '@playwright/test'
 import { applyDownloadUpdate } from '../src/shared/downloadUpdate'
-import type {
-  HttpBlockState,
-  HttpDownloadUpdate,
-  SteamCellState,
-  SteamDownloadUpdate,
-  TorrentDownloadUpdate,
-  TorrentPieceState
-} from '../src/shared/types'
+import type { SteamCellState, SteamDownloadUpdate } from '../src/shared/types'
 
-// O. How the window puts a download back together from the updates the main process sends: a
-// snapshot, then only the blocks that changed.
+// How the window puts a download back together from the updates the main process sends: a
+// snapshot, then only the cells that changed.
 
-const block = (index: number, bytesDownloaded = 0): HttpBlockState => ({
-  kind: 'http',
+const cell = (index: number, bytesDownloaded = 0): SteamCellState => ({
+  kind: 'steam',
   index,
   rangeStart: index * 100,
   rangeEnd: index * 100 + 99,
@@ -22,149 +15,63 @@ const block = (index: number, bytesDownloaded = 0): HttpBlockState => ({
   bytesByInterface: bytesDownloaded ? { a: bytesDownloaded } : {}
 })
 
-const update = (seq: number, blocks: HttpBlockState[], id = 'd1'): HttpDownloadUpdate => ({
+const update = (seq: number, cells: SteamCellState[], id = 'd1'): SteamDownloadUpdate => ({
   seq,
   state: {
-    kind: 'http',
+    kind: 'steam',
     id,
-    url: 'http://example.test/file',
-    fileName: 'file',
-    destinationPath: '/tmp/file',
+    url: 'steam://app/480',
+    fileName: 'Spacewar',
+    destinationPath: '/tmp/Spacewar',
     totalBytes: 400,
-    bytesDownloaded: blocks.reduce((sum, entry) => sum + entry.bytesDownloaded, 0),
+    bytesDownloaded: cells.reduce((sum, entry) => sum + entry.bytesDownloaded, 0),
     speedBytesPerSec: 0,
     status: 'downloading',
     networks: [],
     streams: [],
     peakStreams: 0,
-    totalBlocks: 4,
-    blockSizeBytes: 100,
+    totalCells: 4,
+    totalChunks: 40,
+    chunksDone: 0,
+    app: { appId: 480, name: 'Spacewar', branch: 'public' },
+    depots: [],
+    fileCount: 2,
+    installBytes: 1000,
     startedAt: 0
   },
-  blocks
+  cells
 })
 
-const full = (seq: number, id = 'd1'): HttpDownloadUpdate =>
-  update(seq, [block(0), block(1), block(2), block(3)], id)
+const full = (seq: number, id = 'd1'): SteamDownloadUpdate =>
+  update(seq, [cell(0), cell(1), cell(2), cell(3)], id)
 
 test.describe('download updates', () => {
-  test('changed blocks land on the ones already there', () => {
-    const start = applyDownloadUpdate(null, full(1))
-    const next = applyDownloadUpdate(start, update(2, [block(1, 50)]))!
-    expect(next.kind).toBe('http')
-    if (next.kind !== 'http' || start?.kind !== 'http') throw new Error('Expected HTTP state')
-    expect(next.blocks.map((entry) => entry.bytesDownloaded)).toEqual([0, 50, 0, 0])
+  test('changed cells land on the ones already there', () => {
+    const start = applyDownloadUpdate(null, full(1))!
+    const next = applyDownloadUpdate(start, update(2, [cell(1, 50)]))!
+    expect(next.cells.map((entry) => entry.bytesDownloaded)).toEqual([0, 50, 0, 0])
     expect(next.seq).toBe(2)
     // What was there is left untouched.
-    expect(start.blocks[1].bytesDownloaded).toBe(0)
+    expect(start.cells[1].bytesDownloaded).toBe(0)
   })
 
   test('an update sent before a snapshot was taken, arriving after it, is ignored', () => {
     const snapshot = applyDownloadUpdate(
       null,
-      update(5, [block(0, 100), block(1, 80), block(2), block(3)])
+      update(5, [cell(0, 100), cell(1, 80), cell(2), cell(3)])
     )
-    expect(applyDownloadUpdate(snapshot, update(4, [block(1, 40)]))).toBe(snapshot)
+    expect(applyDownloadUpdate(snapshot, update(4, [cell(1, 40)]))).toBe(snapshot)
     // And a snapshot older than what is already there changes nothing.
-    const newer = applyDownloadUpdate(snapshot, update(6, [block(1, 100)]))
+    const newer = applyDownloadUpdate(snapshot, update(6, [cell(1, 100)]))
     expect(applyDownloadUpdate(newer, full(5))).toBe(newer)
   })
 
   test('a download with no whole picture yet waits for one', () => {
     // A window that has just loaded can be sent a partial update before its snapshot comes back.
-    expect(applyDownloadUpdate(null, update(3, [block(2, 10)]))).toBeNull()
+    expect(applyDownloadUpdate(null, update(3, [cell(2, 10)]))).toBeNull()
     const previous = applyDownloadUpdate(null, full(1, 'old'))
-    expect(applyDownloadUpdate(previous, update(3, [block(2, 10)], 'new'))).toBe(previous)
-    // A new download's first update has every block, and stands on its own.
+    expect(applyDownloadUpdate(previous, update(3, [cell(2, 10)], 'new'))).toBe(previous)
+    // A new download's first update has every cell, and stands on its own.
     expect(applyDownloadUpdate(previous, full(1, 'new'))?.id).toBe('new')
-  })
-
-  test('torrent piece updates merge independently from live peer state', () => {
-    const piece = (index: number, provisionalBytes = 0): TorrentPieceState => ({
-      kind: 'torrent',
-      index,
-      rangeStart: index * 100,
-      rangeEnd: index * 100 + 99,
-      status: provisionalBytes > 0 ? 'downloading' : 'pending',
-      bytesDownloaded: 0,
-      provisionalBytes,
-      bytesByInterface: {}
-    })
-    const torrentUpdate = (seq: number, pieces: TorrentPieceState[]): TorrentDownloadUpdate => ({
-      seq,
-      state: {
-        kind: 'torrent',
-        id: 'torrent',
-        url: 'magnet:?xt=urn:btih:test',
-        fileName: 'files',
-        destinationPath: '/tmp/files',
-        totalBytes: 200,
-        bytesDownloaded: 0,
-        speedBytesPerSec: 0,
-        status: 'downloading',
-        networks: [],
-        peers: [],
-        peakPeers: 0,
-        totalPieces: 2,
-        pieceLength: 100,
-        files: { chosen: 1, total: 1 },
-        folder: false,
-        skippedBytes: 0,
-        bytesUploaded: 0,
-        uploadSpeedBytesPerSec: 0,
-        startedAt: 0
-      },
-      pieces
-    })
-    const start = applyDownloadUpdate(null, torrentUpdate(1, [piece(0), piece(1)]))
-    const next = applyDownloadUpdate(start, torrentUpdate(2, [piece(1, 40)]))
-    expect(next?.kind).toBe('torrent')
-    if (next?.kind !== 'torrent') throw new Error('Expected torrent state')
-    expect(next.pieces.map((entry) => entry.provisionalBytes)).toEqual([0, 40])
-    expect(next.peers).toEqual([])
-  })
-
-  test('Steam cell updates merge on the cells already there, and need a snapshot first', () => {
-    const cell = (index: number, bytesDownloaded = 0): SteamCellState => ({
-      kind: 'steam',
-      index,
-      rangeStart: index * 100,
-      rangeEnd: index * 100 + 99,
-      status: bytesDownloaded === 100 ? 'completed' : 'pending',
-      bytesDownloaded,
-      bytesByInterface: bytesDownloaded ? { a: bytesDownloaded } : {}
-    })
-    const steamUpdate = (seq: number, cells: SteamCellState[]): SteamDownloadUpdate => ({
-      seq,
-      state: {
-        kind: 'steam',
-        id: 'game',
-        url: 'steam://app/480',
-        fileName: 'Spacewar',
-        destinationPath: '/tmp/Spacewar',
-        totalBytes: 300,
-        bytesDownloaded: 0,
-        speedBytesPerSec: 0,
-        status: 'downloading',
-        networks: [],
-        streams: [],
-        peakStreams: 0,
-        totalCells: 3,
-        totalChunks: 30,
-        chunksDone: 0,
-        app: { appId: 480, name: 'Spacewar', branch: 'public' },
-        depots: [],
-        fileCount: 2,
-        installBytes: 1000,
-        startedAt: 0
-      },
-      cells
-    })
-    expect(applyDownloadUpdate(null, steamUpdate(1, [cell(0)]))).toBeNull()
-    const start = applyDownloadUpdate(null, steamUpdate(1, [cell(0), cell(1), cell(2)]))
-    const next = applyDownloadUpdate(start, steamUpdate(2, [cell(2, 100)]))
-    if (next?.kind !== 'steam') throw new Error('Expected Steam state')
-    expect(next.cells.map((entry) => entry.bytesDownloaded)).toEqual([0, 0, 100])
-    expect(applyDownloadUpdate(next, steamUpdate(2, [cell(0, 50)]))).toBe(next)
   })
 })

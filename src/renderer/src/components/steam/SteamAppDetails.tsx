@@ -125,8 +125,8 @@ function Choices({
   const interfaces = useAppStore((store) => store.interfaces)
   const homeDir = useAppStore((store) => store.homeDir)
   // Its own, apart from New download's: a Steam library is no place for other downloads.
-  const destinationDir = useAppStore((store) => store.steamDestinationDir)
-  const setDestinationDir = useAppStore((store) => store.setSteamDestinationDir)
+  const destinationDir = useAppStore((store) => store.destinationDir)
+  const setDestinationDir = useAppStore((store) => store.setDestinationDir)
   const networkPreferences = useAppStore((store) => store.networkPreferences)
   const full = useAppStore(
     (store) =>

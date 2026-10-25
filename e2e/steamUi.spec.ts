@@ -95,8 +95,8 @@ test.describe('the Steam dialog', () => {
     await expect(dialog.getByRole('button', { name: 'Log in' })).toBeVisible()
     await dialog.getByRole('button', { name: 'Close' }).click()
 
+    // Logged in, it goes on by itself.
     await plexo.loginSteam()
-    await page.getByRole('button', { name: 'Retry' }).click()
     await plexo.waitForSteamStatus('completed')
   })
 
@@ -151,11 +151,10 @@ test.describe('the Steam dialog', () => {
     expect(done.adopted).toBe(true)
     // What was there already was kept, not fetched again.
     expect(steam.chunkRequests().length).toBeLessThan(steam.uniqueChunks().length)
-    // The folder is the Steam dialog's own: New download's stays where it was.
+    // The next game goes there too.
     const settings = async (): Promise<Record<string, unknown>> =>
       JSON.parse(await readFile(join(dirs.userData, 'app-settings.json'), 'utf8'))
-    await expect.poll(async () => (await settings()).steamDestinationDir).toBe(common)
-    expect((await settings()).destinationDir).not.toBe(common)
+    await expect.poll(async () => (await settings()).destinationDir).toBe(common)
   })
 
   test('Auto-detect says so when Steam isn’t on this computer', async ({

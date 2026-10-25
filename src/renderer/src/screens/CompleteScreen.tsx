@@ -4,14 +4,7 @@ import { DetailHeader } from '../components/DetailHeader'
 import { ThroughputChart } from '../components/ThroughputChart'
 import { useNetworkVisuals } from '../hooks/useNetworkVisuals'
 import { useAppStore } from '../store/useAppStore'
-import {
-  describeFileCount,
-  dirnameOf,
-  formatBytes,
-  formatDuration,
-  toDisplayPath,
-  wantedBytes
-} from '../utils/format'
+import { dirnameOf, formatBytes, formatDuration, toDisplayPath } from '../utils/format'
 import { useFormatSpeed } from '../hooks/useFormatSpeed'
 
 const sectionHeaderClass =
@@ -28,7 +21,7 @@ export function CompleteScreen({
   const networkVisual = useNetworkVisuals()
   const missing = 'missing' in download && download.missing === true
 
-  const finalSize = wantedBytes(download) || download.bytesDownloaded
+  const finalSize = download.totalBytes || download.bytesDownloaded
   const totalPausedMs = download.totalPausedMs ?? 0
   // completedAt is always set by the time a download reaches 'completed' — the
   // fallback here is just to keep this pure (no Date.now() during render).
@@ -39,23 +32,13 @@ export function CompleteScreen({
   const avgSpeed = elapsedSeconds > 0 ? finalSize / elapsedSeconds : 0
   const [avgSpeedValue, avgSpeedUnit] = formatSpeed(avgSpeed).split(' ')
 
-  // The networks that carried part of the file.
+  // The networks that carried part of the game.
   const groups = download.networks.filter((network) => network.bytesDownloaded > 0)
   const visuals = groups.map((group) => networkVisual(group.id, group.kind, group.label))
   const totalWeight = groups.reduce((sum, group) => sum + group.bytesDownloaded, 0) || 1
   const totalRetries = download.networks.reduce((sum, network) => sum + network.retries, 0)
-  const isTorrent = download.kind === 'torrent'
-  // "Chunks" in the block grid means byte ranges, not parallel connections. A torrent's are its
-  // pieces, those its chosen files needed.
-  const totalChunkCount =
-    'unitsWritten' in download
-      ? download.unitsWritten
-      : download.kind === 'torrent'
-        ? download.pieces.filter((piece) => piece.status !== 'skipped').length
-        : download.kind === 'steam'
-          ? download.totalChunks
-          : download.totalBlocks
-  const files = isTorrent && download.files.total > 1 ? download.files : null
+  // Depot chunks, not the grid's parts.
+  const totalChunkCount = 'unitsWritten' in download ? download.unitsWritten : download.totalChunks
 
   return (
     <div className="flex h-full flex-col bg-background">
@@ -82,7 +65,6 @@ export function CompleteScreen({
               {download.fileName}
             </div>
             <div className="mt-[5px] truncate font-mono text-[11.5px] leading-[1.3] text-muted-foreground">
-              {files && `${describeFileCount(files.chosen, files.total)} · `}
               {formatBytes(finalSize)} ·{' '}
               {missing
                 ? 'moved or deleted since'
@@ -118,10 +100,7 @@ export function CompleteScreen({
           },
           { label: 'Networks', value: String(groups.length) },
           // The most it ran at once: streams that didn't make it faster were closed along the way.
-          {
-            label: isTorrent ? 'Peers' : 'Streams',
-            value: String(isTorrent ? download.peakPeers : download.peakStreams)
-          }
+          { label: 'Streams', value: String(download.peakStreams) }
         ].map((stat, index) => (
           <div
             key={stat.label}
@@ -182,13 +161,9 @@ export function CompleteScreen({
         </div>
         <div className="mt-auto pt-3 font-mono text-[11px] leading-[1.4] text-muted-foreground">
           {[
-            `written in ${totalChunkCount} ${isTorrent ? 'pieces' : 'chunks'}`,
-            // What its peers got from it while it downloaded.
-            isTorrent && `uploaded ${formatBytes(download.bytesUploaded ?? 0)}`,
+            `written in ${totalChunkCount} chunks`,
             `${totalRetries} ${totalRetries === 1 ? 'retry' : 'retries'}`
-          ]
-            .filter(Boolean)
-            .join(' · ')}
+          ].join(' · ')}
         </div>
       </div>
     </div>

@@ -1,42 +1,23 @@
 import { STEAM_LOGIN_REQUIRED } from '@shared/steam'
 import type { DownloadState } from '@shared/types'
 import { Folder } from 'lucide-react'
-import { useState } from 'react'
 import { DetailHeader } from '../components/DetailHeader'
 import { TruncatedText } from '../components/TruncatedText'
 import { Button } from '../components/ui/button'
 import { useAppStore } from '../store/useAppStore'
-import {
-  describeError,
-  fileExtensionBadge,
-  formatBytes,
-  formatPercent,
-  isFolder,
-  wantedBytes
-} from '../utils/format'
+import { describeError, formatBytes, formatPercent } from '../utils/format'
 
 export function ErrorScreen({ download }: { download: DownloadState }): React.JSX.Element {
-  const [copied, setCopied] = useState(false)
   const openSteam = useAppStore((store) => store.openSteam)
   const cancelled = download.status === 'cancelled'
   const knownSize = download.totalBytes > 0
-  const percent = knownSize ? formatPercent(download.bytesDownloaded, wantedBytes(download)) : 0
+  const percent = knownSize ? formatPercent(download.bytesDownloaded, download.totalBytes) : 0
   const heading = cancelled ? 'Download cancelled' : 'Download failed'
   const description = cancelled
     ? 'The download was stopped before finishing.'
     : download.error
       ? describeError(download.error)
       : 'The download stopped unexpectedly. Try again.'
-
-  const handleCopyUrl = async (): Promise<void> => {
-    try {
-      await navigator.clipboard.writeText(download.url)
-      setCopied(true)
-      setTimeout(() => setCopied(false), 2000)
-    } catch {
-      // Ignore clipboard write failures
-    }
-  }
 
   return (
     <div className="flex h-full flex-col bg-background">
@@ -105,7 +86,7 @@ export function ErrorScreen({ download }: { download: DownloadState }): React.JS
             </div>
           </div>
           {/* Retrying needs the login first; it is had in the Steam dialog. */}
-          {download.kind === 'steam' && download.error === STEAM_LOGIN_REQUIRED && (
+          {download.error === STEAM_LOGIN_REQUIRED && (
             <Button type="button" variant="secondary" onClick={() => openSteam()}>
               Log in to Steam
             </Button>
@@ -114,11 +95,7 @@ export function ErrorScreen({ download }: { download: DownloadState }): React.JS
           {/* File capsule */}
           <div className="flex w-full items-center gap-[11px] rounded-[9px] border-[0.5px] border-border bg-background p-[10px_12px] text-left">
             <div className="flex size-[34px] shrink-0 items-center justify-center rounded-[7px] border-[0.5px] border-[var(--border-strong)] bg-card font-mono text-[8.5px] leading-none font-semibold text-[var(--text-secondary)]">
-              {isFolder(download) ? (
-                <Folder aria-label="Folder" className="size-[15px]" />
-              ) : (
-                fileExtensionBadge(download.fileName)
-              )}
+              <Folder aria-label="Folder" className="size-[15px]" />
             </div>
             <div className="min-w-0 flex-1">
               <TruncatedText
@@ -130,7 +107,7 @@ export function ErrorScreen({ download }: { download: DownloadState }): React.JS
                   <>
                     {formatBytes(download.bytesDownloaded)}
                     {knownSize
-                      ? ` of ${formatBytes(wantedBytes(download))} (${percent}%)`
+                      ? ` of ${formatBytes(download.totalBytes)} (${percent}%)`
                       : ' downloaded'}
                   </>
                 ) : (
@@ -140,29 +117,11 @@ export function ErrorScreen({ download }: { download: DownloadState }): React.JS
             </div>
           </div>
 
-          {download.kind === 'steam' ? (
-            // A Steam download has no link to copy: it comes from the account's own library.
-            <div className="flex w-full min-w-0 items-center gap-2 border-t-[0.5px] border-border pt-3">
-              <div className="min-w-0 flex-1 text-left font-mono text-[11px] leading-none text-muted-foreground">
-                <TruncatedText text={`Steam app ${download.app.appId} · ${download.app.branch}`} />
-              </div>
+          <div className="flex w-full min-w-0 items-center gap-2 border-t-[0.5px] border-border pt-3">
+            <div className="min-w-0 flex-1 text-left font-mono text-[11px] leading-none text-muted-foreground">
+              <TruncatedText text={`Steam app ${download.app.appId} · ${download.app.branch}`} />
             </div>
-          ) : (
-            <div className="flex w-full min-w-0 items-center gap-2 border-t-[0.5px] border-border pt-3">
-              <div className="min-w-0 flex-1 text-left font-mono text-[11px] leading-none text-muted-foreground">
-                <TruncatedText text={download.url} />
-              </div>
-              <button
-                type="button"
-                onClick={handleCopyUrl}
-                className={`min-h-6 shrink-0 border-none bg-transparent px-1 py-0.5 font-mono text-[11px] leading-none ${
-                  copied ? 'text-[var(--color-success)]' : 'text-primary'
-                }`}
-              >
-                {copied ? 'Copied' : 'Copy link'}
-              </button>
-            </div>
-          )}
+          </div>
         </div>
       </div>
     </div>

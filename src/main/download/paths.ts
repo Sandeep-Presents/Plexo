@@ -1,7 +1,6 @@
 import { app } from 'electron'
-import { lstat, mkdir, open, rm, stat } from 'node:fs/promises'
+import { lstat, mkdir, open, stat } from 'node:fs/promises'
 import { basename, extname, join } from 'node:path'
-import { markSparse } from './sparseFile'
 
 export function getDefaultDownloadsDir(): string {
   return app.getPath('downloads')
@@ -89,32 +88,9 @@ async function claimName(
 }
 
 /**
- * Claims a download by exclusively creating <final name>.plexo. The final name
- * itself does not appear until the file is complete. An existing partial file
- * also claims its corresponding final name, including after a restart.
- */
-export async function reserveDestinationPath(directory: string, fileName: string): Promise<string> {
-  return claimName(
-    directory,
-    fileName,
-    { suffix: '.plexo', extension: true },
-    async (candidate) => {
-      const handle = await open(`${candidate}.plexo`, 'wx+')
-      await handle.close()
-      if (!(await pathExists(candidate))) {
-        await markSparse(`${candidate}.plexo`)
-        return true
-      }
-      await rm(`${candidate}.plexo`)
-      return false
-    }
-  )
-}
-
-/**
- * Claims the final name itself, by exclusively creating it empty: a torrent is written in place,
- * as torrent clients do, so what's there from the start is its folder (or its one file). Being
- * new, it's this download's alone, never something already in the destination.
+ * Claims the final name itself, by exclusively creating it empty: a game is installed in place, so
+ * what's there from the start is its folder. Being new, it's this download's alone, never
+ * something already in the destination.
  */
 export async function claimDestinationPath(
   directory: string,

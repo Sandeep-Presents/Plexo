@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto'
 import { lstat, open, statfs } from 'node:fs/promises'
-import { basename, isAbsolute, join } from 'node:path'
+import { isAbsolute, join } from 'node:path'
 import type { SteamPlan, SteamPrepareProgress, SteamPrepareRequest } from '../../shared/steam'
-import { HttpStatusError } from '../download/chunkDownloader'
+import { HttpStatusError } from '../download/httpStatus'
 import { sanitizeFileName } from '../download/paths'
 import type { NetworkMonitor } from '../network/interfaces'
 import type { Limits } from '../network/limits'
@@ -12,7 +12,7 @@ import type { SteamAccount } from './account'
 import { depotUnavailable, isBranchName, manifestFor } from './appInfo'
 import { matchesChunk } from './chunkCodec'
 import { fetchBody } from './chunkFetch'
-import { buildLayout, checkFolderName, UnsafeLayoutError, type SteamLayout } from './layout'
+import { buildLayout, UnsafeLayoutError, type SteamLayout } from './layout'
 import type { SteamLibrary } from './library'
 import { decryptManifestNames, readManifest, type Manifest } from './manifest'
 import { redactedMessage } from './redact'
@@ -138,8 +138,6 @@ export class SteamPlanner {
       }
 
       const folderName = sanitizeFileName(details.installDir || details.name)
-      checkFolderName(folderName)
-      checkFolderName(basename(request.destinationDir))
 
       const servers = new ServerPool(
         rankServers(await session.contentServers(request.appId), request.appId)

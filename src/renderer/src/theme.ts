@@ -50,11 +50,11 @@ export const DANGER = 'var(--color-danger)'
 // leftover space; that also keeps the gap after the bar, into Share, the same fixed 12px as
 // every other column boundary — instead of Network's gap growing while Progress's stays put.
 // The 190px floor exists because every row shares this one subgrid track, collapsed and expanded
-// alike: with a floor of 0, expanding a group mounts "Stream #N · Chunk #N · <status>" rows into
+// alike: with a floor of 0, expanding a group mounts "Stream #N · <server> · <status>" rows into
 // the same column, which is routinely wider than the collapsed row's "<name> · N streams" — so
 // the track (and everything right of it) would jump wider the instant you expand. 190px already
 // covers that expanded content, so expanding never grows the track further.
-// Keep a speed value and its unit together, including torrent direction arrows. Let unusually
+// Keep a speed value and its unit together. Let unusually
 // long values grow the track rather than wrap or overflow into the adjacent byte totals.
 export const NETWORK_ROW_GRID_COLUMNS =
   '30px minmax(190px, max-content) 1fr 48px minmax(104px, max-content) 160px'

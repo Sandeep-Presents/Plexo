@@ -1,6 +1,6 @@
 import { Badge } from './ui/badge'
 
-/** Next to a Steam download's name, wherever it's listed, as TorrentBadge is for a torrent. */
+/** Next to a Steam download's name, wherever it's listed: says which launcher it is from. */
 export function SteamBadge(): React.JSX.Element {
   return (
     <Badge

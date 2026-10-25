@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test'
 import fc from 'fast-check'
 import { posix } from 'node:path'
-import { buildLayout, checkFolderName, UnsafeLayoutError } from '../src/main/steam/layout'
+import { buildLayout, UnsafeLayoutError } from '../src/main/steam/layout'
 import {
   FileFlag,
   type Manifest,
@@ -10,8 +10,8 @@ import {
 } from '../src/main/steam/manifest'
 
 // What a Steam download writes. A manifest's names come from the network, so the property that
-// matters is the torrent paths one: every path either stays inside the install folder, or the
-// whole download is refused before anything is written.
+// matters most is about paths: every path either stays inside the install folder, or the whole
+// download is refused before anything is written.
 
 let shaSeed = 0
 const chunk = (offset: number, size: number, sha?: Buffer): ManifestChunk => ({
@@ -261,11 +261,5 @@ test.describe('steam layout', () => {
       'linux'
     )
     expect(layout.installBytes).toBe(size)
-  })
-
-  test('an install folder named like Plexo’s partial files is refused', () => {
-    expect(() => checkFolderName('Game.plexo')).toThrow(UnsafeLayoutError)
-    expect(() => checkFolderName('Game.PLEXO')).toThrow(UnsafeLayoutError)
-    expect(() => checkFolderName('Game')).not.toThrow()
   })
 })

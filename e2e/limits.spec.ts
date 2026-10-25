@@ -1,81 +1,76 @@
 import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { dataPeriodKey, nextDataReset } from '../src/shared/dataLimits'
-import { BLOCK, expect, test } from './fixtures'
-import { seededBytes, sha256 } from './origin'
-import { named, Swarm, torrentFileOnDisk } from './torrentSwarm'
+import { expect, test } from './fixtures'
+import { syntheticApp } from './steamOrigin'
 
-// Speed & data limits (main/network/limits.ts): every byte received goes through them, whether
-// an HTTP response's or a torrent peer's. The checks fixture verifies each finished download's
-// bytes, which is what matters most here: holding a connection back must never garble it.
+// Speed & data limits (main/network/limits.ts): every byte received from a content server goes
+// through them. The checks fixture verifies each finished install's bytes, which is what matters
+// most here: holding a connection back must never garble it.
 
 const KB = 1024
+/** The fake game's chunks are 64 KB before compression. */
+const CHUNK = 64 * KB
+
+/** How long `bytes` must take at `limit` bytes a second, less the second's worth a bucket may hold
+ * to begin with, with a little room for the timer's rounding. */
+const atLeastMs = (bytes: number, limit: number): number => ((bytes - limit) / limit) * 900
 
 test.describe('speed and data limits', () => {
-  test('a total speed limit holds a download to it', async ({ plexo, serve }) => {
-    const origin = await serve({ size: 16 * BLOCK })
-    await plexo.api.updateSettings({ speedLimit: 256 * KB })
-    const started = Date.now()
-    await plexo.start(origin.url(), origin.sha256)
-    await plexo.waitForHttpStatus('completed', 30_000)
-    // 1 MB at 256 KB/s: four seconds, less the second's worth a bucket may hold.
-    expect(Date.now() - started).toBeGreaterThan(2500)
+  test('a total speed limit holds a download to it', async ({ plexo, serveSteam }) => {
+    const steam = await serveSteam(syntheticApp(41, 2))
+    const limit = 192 * KB
+    await plexo.api.updateSettings({ speedLimit: limit })
+    await plexo.startSteam(steam)
+    const done = await plexo.waitForSteamStatus('completed', 30_000)
+    // Timed from its own start, after the plan was made: several seconds' worth at the limit.
+    expect(done.bytesDownloaded).toBeGreaterThan(4 * limit)
+    expect(done.completedAt! - done.startedAt).toBeGreaterThan(
+      atLeastMs(done.bytesDownloaded, limit)
+    )
   })
 
   test('slow mode holds downloads to its speed, the default one included', async ({
     plexo,
-    serve
+    serveSteam
   }) => {
-    const origin = await serve({ size: 96 * BLOCK })
+    const steam = await serveSteam(syntheticApp(42, 12))
     // Switched on as the status bar does, its speed never changed: 2 MB/s.
+    const limit = 2 * 1024 * KB
     await plexo.api.updateSettings({ slowMode: true })
-    const started = Date.now()
-    await plexo.start(origin.url(), origin.sha256)
-    await plexo.waitForHttpStatus('completed', 30_000)
-    // 6 MB at 2 MB/s: three seconds, less the second's worth a bucket may hold.
-    expect(Date.now() - started).toBeGreaterThan(1800)
+    await plexo.startSteam(steam)
+    const done = await plexo.waitForSteamStatus('completed', 30_000)
+    expect(done.bytesDownloaded).toBeGreaterThan(2 * limit)
+    expect(done.completedAt! - done.startedAt).toBeGreaterThan(
+      atLeastMs(done.bytesDownloaded, limit)
+    )
   })
 
   for (const period of ['day', 'week', 'month'] as const) {
     test(`a network stops at its ${period} limit and resumes when it is raised`, async ({
       plexo,
-      serve
+      serveSteam
     }) => {
-      const origin = await serve({ size: 16 * BLOCK })
+      const steam = await serveSteam(syntheticApp(43, 3))
       await plexo.api.updateSettings({
-        networkPreferences: { a: { dataLimit: 4 * BLOCK, dataLimitPeriod: period } }
+        networkPreferences: { a: { dataLimit: 4 * CHUNK, dataLimitPeriod: period } }
       })
-      const id = await plexo.start(origin.url(), origin.sha256)
+      const id = await plexo.startSteam(steam)
 
       const stopped = await plexo.waitUntil((state) =>
         state.networks.some((network) => network.id === 'a' && network.status === 'limit')
       )
       expect(stopped.status).toBe('downloading')
-      expect(stopped.bytesDownloaded).toBeLessThan(16 * BLOCK)
-      expect((await plexo.api.networkUsage()).a).toBeGreaterThanOrEqual(4 * BLOCK)
+      expect(stopped.chunksDone).toBeLessThan(stopped.totalChunks)
+      expect((await plexo.api.networkUsage()).a).toBeGreaterThanOrEqual(4 * CHUNK)
 
       await plexo.api.updateSettings({
-        networkPreferences: { a: { dataLimit: 1024 * BLOCK, dataLimitPeriod: period } }
+        networkPreferences: { a: { dataLimit: 1024 * CHUNK, dataLimitPeriod: period } }
       })
-      await plexo.waitForHttpStatus('completed')
+      await plexo.waitForSteamStatus('completed')
       expect((await plexo.byId(id))?.status).toBe('completed')
     })
   }
-
-  test('a torrent under a speed limit still arrives whole', async ({ plexo }) => {
-    const swarm = await new Swarm().start()
-    try {
-      const data = seededBytes(1024 * KB, 31)
-      const torrent = await swarm.seed([named(data, 'limited.bin')], { pieceLength: 64 * KB })
-      await plexo.api.updateSettings({ speedLimit: 384 * KB })
-      const started = Date.now()
-      await plexo.start(await torrentFileOnDisk(torrent), sha256(data))
-      await plexo.waitForTorrentStatus('completed', 30_000)
-      expect(Date.now() - started).toBeGreaterThan(1500)
-    } finally {
-      await swarm.stop()
-    }
-  })
 })
 
 test('usage survives period switches and restart, and expired calendar periods reset', async ({
@@ -168,10 +163,9 @@ test('calendar periods use local midnight, Monday weeks, and correct year bounda
 for (const period of ['day', 'week', 'month'] as const) {
   test(`resetting ${period} usage preserves other periods and networks and survives restart`, async ({
     plexo,
-    serve
+    serveSteam
   }) => {
-    const origin = await serve({ size: BLOCK })
-    await plexo.start(origin.url(), origin.sha256)
+    await plexo.startSteam(await serveSteam())
     await plexo.waitForStatus('completed')
     const before = await plexo.api.networkUsage()
     const id = Object.keys(before).find((key) => before[key] > 0)!

@@ -1,6 +1,5 @@
 import { stat, statfs } from 'node:fs/promises'
 import {
-  clipboard,
   dialog,
   ipcMain,
   nativeTheme,
@@ -26,10 +25,7 @@ import { redactedMessage } from '../steam/redact'
 import { findLibraryFolders } from '../steam/steamFolders'
 import { getDefaultDownloadsDir, getHomeDir } from '../download/paths'
 import { listHistory } from '../download/history'
-import { probeUrl } from '../download/probe'
-import { onMagnetCheckStatus } from '../download/torrent/metadata'
 import { deviceBindingSupported } from '../network/deviceBinding'
-import { pendingLink, pendingLinks, releaseLink } from '../openLinks'
 import { NetworkMonitor } from '../network/interfaces'
 import { loadSettings, saveSettings } from '../settings'
 import { showUpdateMenu, updateState } from '../updater'
@@ -119,19 +115,27 @@ function checkPrepareRequest(value: unknown): SteamPrepareRequest {
   throw new Error('Choose what to download again.')
 }
 
-function checkSteamStart(request: StartSteamDownloadRequest): StartSteamDownloadRequest {
-  const { planId, interfaceIds, streamsPerNetwork } = request
+function checkSteamStart(value: unknown): StartSteamDownloadRequest {
+  const { kind, planId, interfaceIds, streamsPerNetwork } = (value ?? {}) as Partial<
+    Record<keyof StartSteamDownloadRequest, unknown>
+  >
   if (
+    kind === 'steam' &&
     isText(planId, 64) &&
     Array.isArray(interfaceIds) &&
     interfaceIds.length <= 64 &&
     interfaceIds.every((id) => isText(id, 256)) &&
     (streamsPerNetwork === undefined ||
       (Number.isInteger(streamsPerNetwork) &&
-        streamsPerNetwork >= 1 &&
-        streamsPerNetwork <= MAX_STREAMS_PER_NETWORK))
+        (streamsPerNetwork as number) >= 1 &&
+        (streamsPerNetwork as number) <= MAX_STREAMS_PER_NETWORK))
   ) {
-    return { kind: 'steam', planId, interfaceIds, streamsPerNetwork }
+    return {
+      kind: 'steam',
+      planId,
+      interfaceIds,
+      streamsPerNetwork: streamsPerNetwork as number | undefined
+    }
   }
   throw new Error('Choose what to download again.')
 }
@@ -197,22 +201,18 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
   ipcMain.on(IpcChannels.getInitialState, async (event) => {
     try {
       const settings = await loadSettings()
-      const { destinationDir, steamDestinationDir } = settings
+      const { destinationDir } = settings
       // Capped: a folder on a dropped network share can take many seconds to answer, and launch
       // waits on this reply — past the cap it's treated as gone and Downloads is used instead.
-      const exists = async (dir: string | undefined): Promise<boolean> =>
-        dir !== undefined &&
+      const destinationExists =
+        destinationDir !== undefined &&
         (await Promise.race([
-          stat(dir).then(
+          stat(destinationDir).then(
             (stats) => stats.isDirectory(),
             () => false
           ),
           new Promise<boolean>((resolve) => setTimeout(resolve, DESTINATION_CHECK_MS, false))
         ]))
-      const [destinationExists, steamDestinationExists] = await Promise.all([
-        exists(destinationDir),
-        exists(steamDestinationDir)
-      ])
       event.returnValue = {
         downloadSchedule: settings.downloadSchedule,
         homeDir: getHomeDir(),
@@ -224,8 +224,7 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
         slowMode: settings.slowMode ?? false,
         slowModeSpeed: settings.slowModeSpeed ?? DEFAULT_SLOW_MODE_SPEED,
         speedUnit: settings.speedUnit ?? 'bytes',
-        destinationDir: destinationExists ? destinationDir : undefined,
-        steamDestinationDir: steamDestinationExists ? steamDestinationDir : undefined
+        destinationDir: destinationExists ? destinationDir : undefined
       } satisfies InitialState
     } catch (error) {
       console.error('[plexo] failed to read initial state', error)
@@ -247,13 +246,6 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
     await openNetworkSettings()
   })
 
-  handle('probeUrl', async (_event, url) => probeUrl(url))
-  onMagnetCheckStatus((status) => {
-    const window = getWindow()
-    if (window && !window.isDestroyed())
-      window.webContents.send(IpcChannels.magnetCheckStatus, status)
-  })
-
   handle('chooseDestinationFolder', async (_event, defaultPath) => {
     const window = getWindow()
     if (!window) return null
@@ -265,47 +257,13 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
     return result.filePaths[0]
   })
 
-  handle('chooseTorrentFile', async () => {
-    const window = getWindow()
-    if (!window) return null
-    const result = await dialog.showOpenDialog(window, {
-      properties: ['openFile'],
-      filters: [{ name: 'Torrent', extensions: ['torrent'] }]
-    })
-    if (result.canceled || result.filePaths.length === 0) return null
-    return result.filePaths[0]
-  })
-
-  handle('pendingLinks', async () => pendingLinks())
-  handle('resumeFromLink', async (_event, linkId, downloadId) => {
-    const link = pendingLink(linkId)
-    if (link?.probe?.kind !== 'http') throw new Error('That download is no longer waiting.')
-    await manager.relink(downloadId, link.probe.finalUrl, {
-      probe: link.probe,
-      browser: link.browser
-    })
-    releaseLink(linkId)
-  })
-  handle('dismissLink', async (_event, id) => releaseLink(id))
-
-  handle('readClipboardText', async () => clipboard.readText())
-
   handle('revealDownload', async (_event, id) => manager.reveal(id))
 
   handle('openDownload', async (_event, id) => manager.open(id))
 
-  // The browser's sign-in is attached here, so it never passes through the window.
-  handle('startDownload', async (_event, request, linkId) => {
-    if (request?.kind === 'steam') {
-      return redacting(() => manager.start(checkSteamStart(request)))
-    }
-    const browser = linkId === undefined ? undefined : pendingLink(linkId)?.browser
-    const id = await manager.start(
-      browser && request.kind === 'http' ? { ...request, browser } : request
-    )
-    if (linkId !== undefined) releaseLink(linkId)
-    return id
-  })
+  handle('startDownload', async (_event, request) =>
+    redacting(() => manager.start(checkSteamStart(request)))
+  )
 
   handle('listDownloads', async () => manager.listDownloads())
 
@@ -318,11 +276,6 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
 
   handle('freeSpace', async (_event, dir) => freeSpace(dir))
 
-  handle('torrentFiles', async (_event, id) => manager.torrentFiles(id))
-  handle('chooseTorrentFiles', async (_event, id, selected) =>
-    manager.chooseTorrentFiles(id, selected)
-  )
-
   handle('pauseDownload', async (_event, id) => {
     await manager.pause(id)
   })
@@ -330,8 +283,6 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
   handle('resumeDownload', async (_event, id) => {
     manager.resume(id)
   })
-
-  handle('relinkDownload', async (_event, id, url) => manager.relink(id, url))
 
   handle('setDownloadNetwork', async (_event, id, networkId, enabled) => {
     await manager.setNetworkEnabled(id, networkId, enabled)

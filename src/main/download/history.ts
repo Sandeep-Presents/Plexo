@@ -5,8 +5,8 @@ import type { FinishedDownload } from '../../shared/types'
 import { readJson, updateJson } from '../jsonFile'
 
 // Finished downloads, newest first: what the window lists under Finished. A download moves here
-// once it completes, leaving its work units behind (tens of thousands of them for a large file,
-// none of any use once it's done), so a long history costs launch nothing.
+// once it completes, leaving its cells and chunk records behind (of no use once it's done), so a
+// long history costs launch nothing.
 
 // ponytail: a fixed cap, oldest dropped; a setting if anyone wants more than this kept.
 const MAX_ENTRIES = 500
@@ -24,7 +24,7 @@ function isEntry(value: unknown): value is FinishedDownload {
   if (!isRecord(value)) return false
   return (
     typeof value.id === 'string' &&
-    (value.kind === 'http' || value.kind === 'torrent' || value.kind === 'steam') &&
+    value.kind === 'steam' &&
     typeof value.url === 'string' &&
     typeof value.fileName === 'string' &&
     typeof value.destinationPath === 'string' &&

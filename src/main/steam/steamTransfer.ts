@@ -4,7 +4,7 @@ import type {
   NetworkStatus,
   SteamStreamState
 } from '../../shared/types'
-import { HttpStatusError } from '../download/chunkDownloader'
+import { HttpStatusError } from '../download/httpStatus'
 import {
   ConcurrencyController,
   DISK_PATIENCE_MS,
@@ -39,10 +39,10 @@ import type { ChunkWorkerPool } from './workerPool'
 // Fetches a Steam download: streams, each one connection to a content server through one network,
 // taking chunks from the scheduler (scheduler.ts), checking each in a worker thread (decrypted,
 // decompressed, its SHA-1 against the manifest) and only then writing it to every place it goes.
-// The rest follows httpTransfer.ts: how many streams a network runs (concurrency.ts), how a
-// network that can't get through is found out, how a busy server is waited out, how a failure is
-// told from a network's from a server's. Where it differs is that a chunk is all or nothing: it is
-// encrypted as a whole, so nothing of it is kept until all of it has come in and checked out.
+// How many streams a network runs is concurrency.ts's. A network that can't get through is found
+// out by its silence, a busy server is waited out as long as it asks, and a failure is told from a
+// network's from a server's. A chunk is all or nothing: it is encrypted as a whole, so nothing of
+// it is kept until all of it has come in and checked out.
 //
 // A run starts by making sure of what it needs from Steam itself (a login, the depot keys, the
 // content server list) and of the install's files and folders; its streams start once that is done.
@@ -478,7 +478,8 @@ export class SteamTransfer implements Transfer {
     return { now, networks, spareWork: this.scheduler.waiting, disk: { reading, since } }
   }
 
-  /** As HttpTransfer.noteDisk: tells the user the disk is what holds the download back. */
+  /** Tells the user the disk is what holds the download back: most streams have waited on their
+   * writes for a while (see DiskWatch), and it isn't over until they have kept up for a while. */
   private noteDisk(now: number, writing: number, held: number): void {
     this.disk.sample(now, writing, held)
     const { state } = this.runtime

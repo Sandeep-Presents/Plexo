@@ -1,14 +1,11 @@
 const IPC_INVOKE_PREFIX = /^Error invoking remote method '[^']*':\s*/
 const NESTED_ERROR_PREFIX = /^Error:\s*/
 
-/** A link that worked and then stopped: signed links run out, and a server turns them away. */
-const LINK_REFUSED = /status (401|403|404|410) for range request/
-
 const ERROR_HINTS: Array<{ pattern: RegExp; message: string }> = [
   {
     pattern: /ENOSPC|EDQUOT/,
     message:
-      'There isn’t enough space to save this download. Free up space or choose another folder.'
+      'There isn’t enough space to install this game. Free up space or choose another folder.'
   },
   {
     pattern: /EACCES|EPERM/,
@@ -17,38 +14,24 @@ const ERROR_HINTS: Array<{ pattern: RegExp; message: string }> = [
   },
   {
     pattern: /ENOENT/,
-    message: 'The file or folder is missing. Check the download location and try again.'
+    message: 'A file or folder is missing. Check the install folder and try again.'
   },
-  { pattern: /EROFS/, message: 'This drive is read-only. Choose another download folder.' },
+  { pattern: /EROFS/, message: 'This drive is read-only. Choose another folder.' },
   {
     pattern: /EIO/,
-    message: 'Plexo couldn’t read or write the download. Check the drive and try again.'
-  },
-  {
-    pattern:
-      /Invalid torrent metadata|Invalid torrent|Invalid info hash|Invalid infoHash|Invalid magnet/i,
-    message: 'Plexo couldn’t read this torrent. Try another magnet link or .torrent file.'
-  },
-  {
-    pattern: LINK_REFUSED,
-    message: 'This link no longer works. Paste a new link to continue.'
+    message: 'Plexo couldn’t read or write the install. Check the drive and try again.'
   },
   {
     pattern: /Download is incomplete/,
-    message: 'Plexo couldn’t download every part of the file. Try downloading again.'
-  },
-  {
-    pattern: /Download file size does not match/,
-    message:
-      'The downloaded file has an unexpected size. Plexo couldn’t save the completed file. Try downloading again.'
+    message: 'Plexo couldn’t download every part of the game. Try again.'
   },
   {
     pattern: /ENOTFOUND|EAI_AGAIN/,
-    message: 'Plexo couldn’t find the server. Check the link and your connection.'
+    message: 'Plexo couldn’t reach Steam. Check your connection.'
   },
   {
     pattern: /ECONNREFUSED/,
-    message: 'The server refused the connection. Try again later.'
+    message: 'Steam refused the connection. Try again later.'
   },
   {
     pattern: /ECONNRESET|socket hang up/,
@@ -60,12 +43,7 @@ const ERROR_HINTS: Array<{ pattern: RegExp; message: string }> = [
   },
   {
     pattern: /CERT|SSL|TLS/i,
-    message:
-      'The server’s security certificate couldn’t be verified. Check the link or try again later.'
-  },
-  {
-    pattern: /Invalid URL|ERR_INVALID_URL/,
-    message: 'That doesn’t look like a valid link.'
+    message: 'Steam’s security certificate couldn’t be verified. Try again later.'
   },
   // steam-user's errors are often bare EResult names.
   {
@@ -82,32 +60,18 @@ const ERROR_HINTS: Array<{ pattern: RegExp; message: string }> = [
     message: 'Steam turned this down. Check the account, and that it owns this game.'
   },
   {
-    pattern: /Server responded with status 401/,
-    message: 'This link requires authentication. Try a direct download link.'
+    pattern: /content server answered with status 5\d\d/,
+    message: 'Steam’s content servers are having trouble. Try again later.'
   },
   {
-    pattern: /Server responded with status 403/,
-    message: 'The server denied access to this file. Check the link or try a new one.'
-  },
-  {
-    pattern: /Server responded with status 404/,
-    message: 'The file couldn’t be found. Check the link and try again.'
-  },
-  {
-    pattern: /Server responded with status 4\d\d/,
-    message: 'The server rejected the download. Check the link and try again.'
-  },
-  {
-    pattern: /Server responded with status 5\d\d/,
-    message: 'The server is having trouble. Try again later.'
+    pattern: /content server answered with status 4\d\d/,
+    message: 'Steam’s content servers turned the download down. Try again later.'
   }
 ]
 
 /** Electron wraps a rejected IPC call as "Error invoking remote method 'x': Error: <message>" —
- * strip that framework noise and translate common network errors and internal consistency-check
- * failures into plain English. Used for both the pre-download probe and a download's own
- * `error` field, so a failure partway through a transfer reads exactly as friendly as one caught
- * before it started. */
+ * strip that framework noise and translate common network and disk errors, and Steam's bare error
+ * names, into plain English. Used for every error the window shows, a download's own included. */
 export function describeError(error: unknown): string {
   const raw = error instanceof Error ? error.message : String(error)
   const stripped = raw.replace(IPC_INVOKE_PREFIX, '').replace(NESTED_ERROR_PREFIX, '')

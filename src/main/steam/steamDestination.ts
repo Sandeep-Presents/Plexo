@@ -11,12 +11,11 @@ import {
   type FileHandle
 } from 'node:fs/promises'
 import { join } from 'node:path'
-import { DownloadFile } from '../download/downloadFile'
 import { markSparse } from '../download/sparseFile'
-import { ownedTorrentFiles } from '../download/torrent/ownedFiles'
+import { ownedFiles } from '../download/ownedFiles'
 import type { SteamLayout } from './layout'
 
-// Where a Steam download installs: its own folder, written in place, as a torrent's is. Every file
+// Where a Steam download installs: its own folder, written in place. Every file
 // is made at its full size before any chunk arrives, and each verified chunk is written at its
 // offsets, in as many files as share it. Writes stay in the open files below (a game has
 // thousands of files; a few dozen are open at once), and a checkpoint syncs the files written
@@ -35,7 +34,7 @@ interface OpenFile {
   writing: number
 }
 
-export class SteamDestination extends DownloadFile {
+export class SteamDestination {
   private readonly open = new Map<number, OpenFile>()
   /** Files written since the last sync, by index into the layout. */
   private touched = new Set<number>()
@@ -45,15 +44,14 @@ export class SteamDestination extends DownloadFile {
 
   constructor(
     /** The install folder. */
-    path: string,
+    readonly path: string,
     private readonly layout: SteamLayout,
-    /** What size() says: the download's size, which is all there for as long as the folder is
-     * (see TorrentDestination.size). */
+    /** What size() says: the download's size, which is all there for as long as the folder is:
+     * an install is written in place, never moved into it. */
     private readonly totalBytes: () => number,
     readonly adopted: boolean,
     created: readonly number[] = []
   ) {
-    super(path)
     this.created = new Set(created)
   }
 
@@ -283,11 +281,6 @@ export class SteamDestination extends DownloadFile {
     return this.path
   }
 
-  /** Published in place: nothing is left over. */
-  discardLeftover(): Promise<void> {
-    return Promise.resolve()
-  }
-
   /** Removes what this download installed: its files and links, then the folders that leaves
    * empty (the install folder too, when nothing else is in it). */
   async discard(): Promise<void> {
@@ -299,15 +292,7 @@ export class SteamDestination extends DownloadFile {
         ({ file, index }) => file.kind !== 'directory' && (!this.adopted || this.created.has(index))
       )
       .map(({ file }) => file.path.split('/').join('/'))
-    let targets: string[]
-    try {
-      ;({ targets } = await ownedTorrentFiles(this.path, mine))
-    } catch {
-      // Its messages are about torrents; the reason is the same.
-      throw new Error(
-        'Part of the install folder is now a link, or a folder where a file was. Manage it in your file browser.'
-      )
-    }
+    const { targets } = await ownedFiles(this.path, mine)
     for (const target of targets) await rm(target, { force: true })
     // Deepest first, so a folder emptied by removing its subfolders goes too; only empty ones go.
     const folders = this.folders()

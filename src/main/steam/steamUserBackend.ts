@@ -16,8 +16,8 @@ import { redactedMessage } from './redact'
 
 // Steam itself, through steam-session (logging in) and steam-user (the Steam client protocol: what
 // the account owns, appinfo, depot keys, manifest request codes, content servers, CDN tokens). The
-// only file that loads either: they come in through import() the first time Steam is used, as
-// webtorrent does, and are left out of the app's start otherwise.
+// only file that loads either: they come in through import() the first time Steam is used, and
+// are left out of the app's start otherwise.
 //
 // steam-user is told to keep nothing on disk (dataDirectory: null): by default it saves depot keys,
 // machine ids and cell ids to a folder of its own. Its debug output, which has request codes and

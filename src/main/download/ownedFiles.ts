@@ -1,8 +1,10 @@
 import { lstat } from 'node:fs/promises'
 import { dirname, isAbsolute, join, relative, sep } from 'node:path'
 
-/** Validate all owned paths before removing any. User-added files and symlink targets are never followed. */
-export async function ownedTorrentFiles(
+/** The files of `root` a download put there, checked before any is removed: each must be inside
+ * `root`, and no folder on the way may be a link. Files the user added are never named, and links
+ * are never followed. */
+export async function ownedFiles(
   root: string,
   files: readonly string[]
 ): Promise<{
@@ -26,13 +28,13 @@ export async function ownedTorrentFiles(
       within === '..' ||
       within.startsWith(`..${sep}`)
     ) {
-      throw new Error('Plexo can’t safely remove this torrent’s files.')
+      throw new Error('Plexo can’t safely remove these files.')
     }
     let parent = dirname(target)
     while (true) {
       const info = await inspect(parent)
       if (info?.isSymbolicLink())
-        throw new Error('A torrent folder is now a link. Manage its files in your file browser.')
+        throw new Error('Part of the install folder is now a link. Manage it in your file browser.')
       folders.add(parent)
       if (parent === root) break
       parent = dirname(parent)
@@ -40,7 +42,7 @@ export async function ownedTorrentFiles(
     const info = await inspect(target)
     if (info) {
       if (info.isDirectory())
-        throw new Error('A torrent file is now a folder. Manage it in your file browser.')
+        throw new Error('A file of the install is now a folder. Manage it in your file browser.')
       targets.push(target)
     }
   }

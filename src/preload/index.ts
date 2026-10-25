@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'electron'
+import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
 import { IpcChannels } from '../shared/ipc-channels'
 import type { IpcContract } from '../shared/ipc-contract'
 import type {
@@ -11,7 +11,6 @@ import type {
   AppSettings,
   DownloadUpdate,
   InitialState,
-  MagnetCheckStatus,
   NetworkInterfaceInfo,
   UpdateState
 } from '../shared/types'
@@ -35,28 +34,19 @@ const plexoApi = {
   deviceBindingSupported: () => invoke('deviceBindingSupported'),
   openNetworkSettings: () => invoke('openNetworkSettings'),
   updateSettings: (patch: AppSettings) => invoke('updateSettings', patch),
-  probeUrl: (url: string) => invoke('probeUrl', url),
   chooseDestinationFolder: (defaultPath: string) => invoke('chooseDestinationFolder', defaultPath),
-  chooseTorrentFile: () => invoke('chooseTorrentFile'),
-  /** Where a file dropped on the window is on disk ('' for one that isn't a file). */
-  pathForFile: (file: File) => webUtils.getPathForFile(file),
-  readClipboardText: () => invoke('readClipboardText'),
   revealDownload: (id: string) => invoke('revealDownload', id),
   openDownload: (id: string) => invoke('openDownload', id),
-  startDownload: (request: IpcContract['startDownload']['args'][0], linkId?: string) =>
-    invoke('startDownload', request, linkId),
+  startDownload: (request: IpcContract['startDownload']['args'][0]) =>
+    invoke('startDownload', request),
   listDownloads: () => invoke('listDownloads'),
   listHistory: () => invoke('listHistory'),
   clearHistory: () => invoke('clearHistory'),
   networkUsage: () => invoke('networkUsage'),
   resetNetworkUsage: (id) => invoke('resetNetworkUsage', id),
   freeSpace: (dir: string) => invoke('freeSpace', dir),
-  torrentFiles: (downloadId: string) => invoke('torrentFiles', downloadId),
-  chooseTorrentFiles: (downloadId: string, selected: number[]) =>
-    invoke('chooseTorrentFiles', downloadId, selected),
   pauseDownload: (downloadId: string) => invoke('pauseDownload', downloadId),
   resumeDownload: (downloadId: string) => invoke('resumeDownload', downloadId),
-  relinkDownload: (downloadId: string, url: string) => invoke('relinkDownload', downloadId, url),
   setDownloadNetwork: (downloadId: string, networkId: string, enabled: boolean) =>
     invoke('setDownloadNetwork', downloadId, networkId, enabled),
   cancelDownload: (downloadId: string) => invoke('cancelDownload', downloadId),
@@ -64,10 +54,6 @@ const plexoApi = {
     invoke('removeDownload', downloadId, options),
   updateState: () => invoke('updateState'),
   showUpdateMenu: () => invoke('showUpdateMenu'),
-  pendingLinks: () => invoke('pendingLinks'),
-  resumeFromLink: (linkId: string, downloadId: string) =>
-    invoke('resumeFromLink', linkId, downloadId),
-  dismissLink: (id: string) => invoke('dismissLink', id),
   steamLoginState: () => invoke('steamLoginState'),
   steamLogin: (request: SteamLoginRequest) => invoke('steamLogin', request),
   steamSubmitCode: (code: string) => invoke('steamSubmitCode', code),
@@ -90,13 +76,6 @@ const plexoApi = {
       callback(progress)
     ipcRenderer.on(IpcChannels.steamPrepareProgress, listener)
     return () => ipcRenderer.removeListener(IpcChannels.steamPrepareProgress, listener)
-  },
-
-  /** pendingLinks() has the new link. */
-  onLinkReceived: (callback: () => void): (() => void) => {
-    const listener = (): void => callback()
-    ipcRenderer.on(IpcChannels.linkReceived, listener)
-    return () => ipcRenderer.removeListener(IpcChannels.linkReceived, listener)
   },
 
   onDownloadUpdated: (callback: (update: DownloadUpdate) => void): (() => void) => {
@@ -123,12 +102,6 @@ const plexoApi = {
       callback(networks)
     ipcRenderer.on(IpcChannels.networksChanged, listener)
     return () => ipcRenderer.removeListener(IpcChannels.networksChanged, listener)
-  },
-
-  onMagnetCheckStatus: (callback: (status: MagnetCheckStatus) => void): (() => void) => {
-    const listener = (_event: IpcRendererEvent, status: MagnetCheckStatus): void => callback(status)
-    ipcRenderer.on(IpcChannels.magnetCheckStatus, listener)
-    return () => ipcRenderer.removeListener(IpcChannels.magnetCheckStatus, listener)
   }
 }
 

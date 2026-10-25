@@ -1,14 +1,14 @@
 import { randomBytes, randomUUID } from 'node:crypto'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import type { AddressInfo, Socket } from 'node:net'
-import { sha256 } from './origin'
 import {
   buildManifest,
   seeded,
   type Compression,
   type FixtureChunk,
   type FixtureFile,
-  type FixtureManifest
+  type FixtureManifest,
+  sha256
 } from './steamContent'
 
 /**
@@ -17,8 +17,8 @@ import {
  * that send depot manifests and chunks built the way Steam's own tools build them. A Steam
  * download runs against it from login to the last chunk, over Plexo's own pinned connections.
  *
- * Like Origin, each content server can be told to misbehave per request, and to hold a response
- * until the test lets it go.
+ * Each content server can be told to misbehave per request, and to hold a response until the
+ * test lets it go.
  */
 
 export const ACCOUNT = { name: 'plexo_tester', password: 'correct horse battery staple' }

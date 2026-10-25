@@ -9,7 +9,6 @@ import type {
   NetworkInterfaceInfo,
   NetworkPreference,
   NetworkPreferences,
-  PendingLink,
   SpeedUnit,
   ThemeSource
 } from '@shared/types'
@@ -43,8 +42,6 @@ interface AppStore {
   downloadFilter: DownloadFilter
   setDownloadFilter: (filter: DownloadFilter) => void
   downloadSchedule: DownloadSchedule | undefined
-  /** The New download dialog, over whatever the window shows. */
-  newDownloadOpen: boolean
   /** The Steam dialog, over whatever the window shows; with an app, opened on that app. */
   steam: { open: boolean; appId?: number }
   /** The Steam login as main last said; null until the Steam dialog first asks. */
@@ -58,21 +55,8 @@ interface AppStore {
   /** Persisted — MB/s or Mbps, for every speed shown. */
   speedUnit: SpeedUnit
 
-  /** Lifted out of the Idle screen so it survives a swap to/from the No-connections screen. */
-  draftUrl: string
-  /** Handed-over links stacked in New download, oldest first. */
-  links: PendingLink[]
-  /** Null while New download shows a link typed or pasted there instead. Links are named by
-   * id, never by position: the list changes while a start is under way. */
-  shownId: string | null
-  /** Bumped to remount New download's form for another link. */
-  formKey: number
-  /** The link last started: still on the clipboard afterwards, so not offered again. */
-  startedUrl: string
-  /** Persisted — the last folder picked, falling back to downloadsDir. */
+  /** Persisted — the games folder last picked, falling back to downloadsDir. */
   destinationDir: string
-  /** Persisted — the last folder picked in the Steam dialog, falling back to destinationDir. */
-  steamDestinationDir: string
 
   /** Asks the main process for the network list now; it also pushes every change. */
   loadInterfaces: () => Promise<void>
@@ -86,27 +70,16 @@ interface AppStore {
   /** Drops a download from the window's view once the main process has removed it. */
   forgetDownload: (id: string) => void
   setView: (view: View) => void
-  /** Opens New download, with `link` in its link field when one is given. */
-  openNewDownload: (link?: string) => void
-  closeNewDownload: () => void
   openSteam: (appId?: number) => void
   closeSteam: () => void
   receiveSteamLogin: (state: SteamLoginState) => void
-  receiveLinks: () => Promise<void>
-  showLink: (id: string) => void
-  /** If it was the one shown, the newest left is shown, or New download closes. */
-  finishLink: (id: string, started: boolean) => void
-  /** Leaves what New download shows alone, the typed link included. */
-  dropLink: (id: string, started: boolean) => void
   setDownloadsAtOnce: (count: number) => void
   /** Each one applies at once, to every download (see main/network/limits.ts). */
   setSpeedLimit: (bytesPerSec: number | undefined) => void
   setSlowMode: (on: boolean) => void
   setSlowModeSpeed: (bytesPerSec: number) => void
   setSpeedUnit: (unit: SpeedUnit) => void
-  setDraftUrl: (url: string) => void
   setDestinationDir: (dir: string) => void
-  setSteamDestinationDir: (dir: string) => void
 }
 
 // Settings saved by the main process, read once before the first paint (see InitialState).
@@ -118,9 +91,6 @@ const initial = window.plexo.initialState
 function persist(patch: AppSettings): void {
   window.plexo.updateSettings(patch).catch(() => {})
 }
-
-/** Links let go here: a listing main sent before it heard so would bring them back. */
-const letGo = new Set<string>()
 
 export const useAppStore = create<AppStore>((set, get) => ({
   interfaces: [],
@@ -138,7 +108,6 @@ export const useAppStore = create<AppStore>((set, get) => ({
   downloadFilter: 'all',
   setDownloadFilter: (downloadFilter) => set({ downloadFilter }),
   downloadSchedule: initial.downloadSchedule,
-  newDownloadOpen: false,
   steam: { open: false },
   steamLogin: null,
   downloadsAtOnce: initial.downloadsAtOnce,
@@ -147,14 +116,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   slowModeSpeed: initial.slowModeSpeed,
   speedUnit: initial.speedUnit,
 
-  draftUrl: '',
-  links: [],
-  shownId: null,
-  formKey: 0,
-  startedUrl: '',
   destinationDir: initial.destinationDir ?? initial.downloadsDir,
-  steamDestinationDir:
-    initial.steamDestinationDir ?? initial.destinationDir ?? initial.downloadsDir,
 
   loadInterfaces: async () => {
     // A re-scan keeps showing the last result rather than flashing back to 'loading'.
@@ -212,56 +174,9 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
   setView: (view) => set({ view }),
 
-  openNewDownload: (link) =>
-    set(link === undefined ? { newDownloadOpen: true } : { newDownloadOpen: true, draftUrl: link }),
-
-  closeNewDownload: () => {
-    const { links, shownId } = get()
-    if (shownId) return get().finishLink(shownId, false)
-    if (links.length > 0) return get().showLink(links[links.length - 1].id)
-    set({ newDownloadOpen: false })
-  },
-
   openSteam: (appId) => set({ steam: { open: true, appId } }),
   closeSteam: () => set({ steam: { open: false } }),
   receiveSteamLogin: (steamLogin) => set({ steamLogin }),
-
-  receiveLinks: async () => {
-    // main lists every link still waiting, so a window that was closed or reloaded gets them back.
-    const pending = await window.plexo.pendingLinks().catch(() => [])
-    const known = new Set(get().links.map((link) => link.id))
-    const arrived = pending.filter((link) => !known.has(link.id) && !letGo.has(link.id))
-    if (arrived.length === 0) return
-    set({ links: [...get().links, ...arrived], newDownloadOpen: true })
-    get().showLink(arrived[arrived.length - 1].id)
-  },
-
-  showLink: (id) => {
-    const link = get().links.find((candidate) => candidate.id === id)
-    if (link) set({ shownId: id, draftUrl: link.url, formKey: get().formKey + 1 })
-  },
-
-  finishLink: (id, started) => {
-    const wasShown = get().shownId === id
-    get().dropLink(id, started)
-    if (!wasShown) return
-    const left = get().links
-    set({ draftUrl: '' })
-    if (left.length > 0) get().showLink(left[left.length - 1].id)
-    else set({ newDownloadOpen: false })
-  },
-
-  dropLink: (id, started) => {
-    const { links, shownId } = get()
-    if (!links.some((link) => link.id === id)) return
-    letGo.add(id)
-    // Started, main has already forgotten its sign-in.
-    if (!started) void window.plexo.dismissLink(id).catch(() => {})
-    set({
-      links: links.filter((link) => link.id !== id),
-      ...(shownId === id && { shownId: null })
-    })
-  },
 
   setDownloadsAtOnce: (downloadsAtOnce) => {
     set({ downloadsAtOnce })
@@ -288,13 +203,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
     persist({ speedUnit })
   },
 
-  setDraftUrl: (draftUrl) => set({ draftUrl }),
   setDestinationDir: (destinationDir) => {
     set({ destinationDir })
     persist({ destinationDir })
-  },
-  setSteamDestinationDir: (steamDestinationDir) => {
-    set({ steamDestinationDir })
-    persist({ steamDestinationDir })
   }
 }))

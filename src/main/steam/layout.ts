@@ -4,8 +4,8 @@ import { FileFlag, type Manifest } from './manifest'
 // What a Steam download writes, worked out from its depots' manifests before anything is: every
 // file and folder in the install, every symlink, and the chunks to fetch, each with every place it
 // is written. A manifest's names come from the network (unsigned, often over plain HTTP), so
-// every path is checked here, the way torrent/paths.ts checks a torrent's: nothing may land
-// outside the install folder, collide with another entry, or be unwritable on this system.
+// every path is checked here: nothing may land outside the install folder, collide with another
+// entry, or be unwritable on this system.
 //
 // Paths are kept with "/" between segments whatever the platform; a segment can never contain
 // either separator, as both split a manifest's names.
@@ -20,9 +20,6 @@ const WINDOWS_INVALID = /[<>:"|?*]|[. ]$/
 const MAX_NAME_BYTES = 255
 /** Steam's chunks are 1 MiB at most; anything far beyond that is a malformed manifest. */
 const MAX_CHUNK_BYTES = 16 * 1024 * 1024
-/** A suffix the download manager treats as its own partial files, and may remove (see
- * partialLeftovers in downloadManager.ts): an install must never be named with it. */
-const PARTIAL_SUFFIX = '.plexo'
 
 export type LayoutEntryKind = 'file' | 'directory' | 'symlink'
 
@@ -140,13 +137,6 @@ function checkLinkWalk(
     } else {
       walked.push(segment)
     }
-  }
-}
-
-/** Refuses a name the download manager could mistake for its own partial file. */
-export function checkFolderName(name: string): void {
-  if (name.toLowerCase().endsWith(PARTIAL_SUFFIX)) {
-    throw new UnsafeLayoutError(`Plexo can't install into a folder ending in ${PARTIAL_SUFFIX}`)
   }
 }
 

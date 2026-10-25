@@ -2,25 +2,19 @@ import type {
   DownloadNetwork,
   DownloadState,
   DownloadUnitState,
-  HttpBlockState,
-  HttpDownloadState,
-  StartHttpDownloadRequest,
-  StartTorrentDownloadRequest,
   SteamCellState,
   SteamDownloadState,
-  SteamRequestPayload,
-  TorrentDownloadState,
-  TorrentPieceState
+  SteamRequestPayload
 } from '../../shared/types'
 import type { NetworkMonitor } from '../network/interfaces'
 import type { Limits } from '../network/limits'
-import type { DownloadFile } from './downloadFile'
-import type { TorrentDestination } from './torrent/torrentDestination'
+import type { SteamDestination } from '../steam/steamDestination'
 
 /**
- * How a download's bytes get fetched: HTTP streams today (see httpTransfer.ts). The manager runs
- * everything a download does whatever fetches it — its networks, pause and resume, saving it,
- * telling the window — and hands the fetching to its transfer.
+ * How a download's bytes get fetched: Steam's content servers so far (see steam/steamTransfer.ts),
+ * another launcher's later. The manager runs everything a download does whatever fetches it — its
+ * networks, pause and resume, saving it, telling the window — and hands the fetching to its
+ * transfer.
  */
 export interface Transfer {
   /** Brings its connections in line with what each network can do now. The manager calls it at
@@ -43,29 +37,10 @@ export interface Transfer {
 
 /** The parts of a download a transfer works on. The manager owns them; this is the same object. */
 interface TransferTargetBase {
-  file: DownloadFile
+  file: SteamDestination
   /** Aborted once the current run is over — stopped (a pause, a cancel, an error) or every
-   * block in — so nothing starts streams for it and no stream waits on. */
+   * chunk in — so nothing starts streams for it and no stream waits on. */
   stop: AbortController
-}
-
-export interface HttpTransferTarget extends TransferTargetBase {
-  state: HttpDownloadState
-  requestPayload: StartHttpDownloadRequest
-  blocks: HttpBlockState[]
-  /** What each stream, and each network, has received (see updateSpeeds). */
-  meters: Meters
-}
-
-export interface TorrentTransferTarget extends TransferTargetBase {
-  file: TorrentDestination
-  state: TorrentDownloadState
-  requestPayload: StartTorrentDownloadRequest
-  pieces: TorrentPieceState[]
-  /** What each peer, and each network, has received (see updateSpeeds). */
-  meters: Meters
-  /** What each peer, and each network, has sent. */
-  uploadMeters: Meters
 }
 
 export interface SteamTransferTarget extends TransferTargetBase {
@@ -76,7 +51,7 @@ export interface SteamTransferTarget extends TransferTargetBase {
   meters: Meters
 }
 
-export type TransferTarget = HttpTransferTarget | TorrentTransferTarget | SteamTransferTarget
+export type TransferTarget = SteamTransferTarget
 
 /** What a transfer asks of the manager. */
 export interface TransferHost {
@@ -150,7 +125,7 @@ function meterOf<K>(meters: Map<K, Meter>, key: K): Meter {
 }
 
 /** Reads every meter as of `now` into the download's speeds: each connection's, each
- * network's and the download's, uploads too for a torrent. Says whether any of them changed. */
+ * network's and the download's. Says whether any of them changed. */
 export function updateSpeeds(runtime: TransferTarget, now: number): boolean {
   const { state } = runtime
   let changed = false
@@ -158,14 +133,11 @@ export function updateSpeeds(runtime: TransferTarget, now: number): boolean {
     if (target[key] !== value) changed = true
     target[key] = value
   }
-  const connections: Array<{ id: number; status: string; speedBytesPerSec: number }> =
-    state.kind === 'torrent' ? state.peers : state.streams
-  for (const connection of connections) {
+  for (const stream of state.streams) {
     // Read every tick, moving or not, so its window is never stale when it moves again.
-    const speed = runtime.meters.connections.get(connection.id)?.read(now) ?? 0
-    // Between blocks, waiting to retry, or a peer sending nothing: 0, not what it last did.
-    const moving = connection.status === 'downloading' || connection.status === 'receiving'
-    set(connection, 'speedBytesPerSec', moving ? speed : 0)
+    const speed = runtime.meters.connections.get(stream.id)?.read(now) ?? 0
+    // Between chunks or waiting to retry: 0, not what it last did.
+    set(stream, 'speedBytesPerSec', stream.status === 'downloading' ? speed : 0)
   }
   let total = 0
   for (const network of state.networks) {
@@ -174,20 +146,6 @@ export function updateSpeeds(runtime: TransferTarget, now: number): boolean {
     total += speed
   }
   set(state, 'speedBytesPerSec', total)
-
-  if ('uploadMeters' in runtime) {
-    const { uploadMeters, state } = runtime
-    for (const peer of state.peers) {
-      set(peer, 'uploadSpeedBytesPerSec', uploadMeters.connections.get(peer.id)?.read(now) ?? 0)
-    }
-    let uploaded = 0
-    for (const network of state.networks) {
-      const speed = uploadMeters.networks.get(network.id)?.read(now) ?? 0
-      set(network, 'uploadSpeedBytesPerSec', speed)
-      uploaded += speed
-    }
-    set(state, 'uploadSpeedBytesPerSec', uploaded)
-  }
   return changed
 }
 
@@ -214,7 +172,7 @@ export function smoothTimeLeft(
 /** Brings time left up to date from the speed, `elapsedSeconds` after it last was. Read on the
  * download's clock, with the speeds. Says whether it changed. */
 export function updateTimeLeft(state: DownloadState, elapsedSeconds: number): boolean {
-  const wanted = state.totalBytes - (state.kind === 'torrent' ? state.skippedBytes : 0)
+  const wanted = state.totalBytes
   const before = state.timeLeftSeconds
   state.timeLeftSeconds =
     state.totalBytes > 0 && state.speedBytesPerSec > 0
@@ -231,15 +189,9 @@ export function updateTimeLeft(state: DownloadState, elapsedSeconds: number): bo
 export function clearSpeeds(state: DownloadState): void {
   state.speedBytesPerSec = 0
   state.timeLeftSeconds = undefined
-  const connections = state.kind === 'torrent' ? state.peers : state.streams
-  for (const connection of connections) connection.speedBytesPerSec = 0
+  for (const stream of state.streams) stream.speedBytesPerSec = 0
   for (const network of state.networks) network.speedBytesPerSec = 0
-  if (state.kind !== 'torrent') state.diskLimited = undefined
-  if (state.kind === 'torrent') {
-    state.uploadSpeedBytesPerSec = 0
-    for (const network of state.networks) network.uploadSpeedBytesPerSec = 0
-    for (const peer of state.peers) peer.uploadSpeedBytesPerSec = 0
-  }
+  state.diskLimited = undefined
 }
 
 /** Waits, but returns early if the signal aborts (pause/cancel shouldn't wait out a retry backoff). */
@@ -261,16 +213,16 @@ export function delay(ms: number, signal: AbortSignal): Promise<void> {
   })
 }
 
-/** Re-derives verified byte counts from HTTP blocks or torrent pieces. */
+/** Re-derives the download's and each network's byte counts from its cells. */
 export function recomputeAggregates(
   state: DownloadState,
   units: readonly DownloadUnitState[]
 ): void {
   let total = 0
   const byNetwork = new Map<string, number>()
-  for (const block of units) {
-    total += block.bytesDownloaded
-    for (const [id, bytes] of Object.entries(block.bytesByInterface)) {
+  for (const unit of units) {
+    total += unit.bytesDownloaded
+    for (const [id, bytes] of Object.entries(unit.bytesByInterface)) {
       byNetwork.set(id, (byNetwork.get(id) ?? 0) + bytes)
     }
   }

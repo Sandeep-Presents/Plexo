@@ -1,5 +1,5 @@
 import type { IncomingMessage } from 'node:http'
-import { HttpStatusError, retryAfterMs } from '../download/chunkDownloader'
+import { HttpStatusError, retryAfterMs } from '../download/httpStatus'
 import { asConnectionError, type StreamConnection } from '../network/routes'
 
 // One request for one whole body — a depot chunk or a manifest — through a stream's connection,

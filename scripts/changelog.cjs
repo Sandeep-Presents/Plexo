@@ -175,4 +175,4 @@
       ]
     }
   ]
-})(typeof window !== 'undefined' ? window : module.exports)
+})(module.exports)

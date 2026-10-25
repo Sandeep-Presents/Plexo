@@ -34,21 +34,21 @@ function writeChannelFiles(root: string, version: string, names = channelFiles):
   }
 }
 
-/** A changelog with one entry for each of `versions`, in docs/changelog.js's shape. */
+/** A changelog with one entry for each of `versions`, in scripts/changelog.cjs's shape. */
 function writeChangelog(root: string, versions: string[]): void {
   const entries = versions.map((version) => ({
     version: `v${version}`,
     items: [{ kind: 'fixed', title: 'Fixes', text: `What changed in ${version}.` }]
   }))
   writeFileSync(
-    join(root, 'docs/changelog.js'),
+    join(root, 'scripts/changelog.cjs'),
     `module.exports.PlexoChangelog = ${JSON.stringify(entries)}\n`
   )
 }
 
 function prepareRelease(root: string, files: string[]): string {
-  for (const dir of ['scripts', 'docs', 'dist']) mkdirSync(join(root, dir), { recursive: true })
-  for (const file of ['scripts/release-notes.mjs', 'docs/downloads.js']) {
+  for (const dir of ['scripts', 'dist']) mkdirSync(join(root, dir), { recursive: true })
+  for (const file of ['scripts/release-notes.mjs', 'scripts/downloads.cjs']) {
     copyFileSync(resolve(__dirname, '..', file), join(root, file))
   }
   writeChangelog(root, ['1.0.0-rc.1', '1.0.0', '1.0.0-rc.11+build.1'])
@@ -93,7 +93,7 @@ test.describe('release artifact selection @smoke', () => {
         `## What's new\n\n- **Fixed: Fixes.** What changed in ${version}.\n\n## Downloads`
       )
       for (const file of expected) {
-        const url = `https://github.com/anmolkapil/plexo/releases/download/v${version}/${file}`
+        const url = `https://github.com/MerikhSS/plexo_steam-/releases/download/v${version}/${file}`
         expect(notes.stdout.split(url + ')')).toHaveLength(2)
       }
       for (const file of [...otherBuilds, ...noise, ...updateFiles(version), ...channelFiles]) {
@@ -114,7 +114,7 @@ test.describe('release artifact selection @smoke', () => {
       expect(result).toMatchObject({
         status: 1,
         stdout: '',
-        stderr: expect.stringContaining('No v1.0.0-rc.2 entry in docs/changelog.js')
+        stderr: expect.stringContaining('No v1.0.0-rc.2 entry in scripts/changelog.cjs')
       })
     }
   })

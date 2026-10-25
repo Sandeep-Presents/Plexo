@@ -1,12 +1,7 @@
-import type { HttpBlockState, HttpStreamState, NetworkStatus, SpeedUnit } from '@shared/types'
+import type { NetworkStatus, SpeedUnit } from '@shared/types'
 import { useState } from 'react'
 import { DANGER, type NetworkVisual } from '../theme'
-import type {
-  HttpNetworkGroup,
-  NetworkGroup,
-  SteamNetworkGroup,
-  TorrentNetworkGroup
-} from '../utils/format'
+import type { NetworkGroup } from '../utils/format'
 import { describeError, formatBytes, formatSpeedOfLimit, networkActive } from '../utils/format'
 import { useFormatSpeed } from '../hooks/useFormatSpeed'
 import { useAppStore } from '../store/useAppStore'
@@ -22,30 +17,21 @@ interface NetworkRowProps {
   visual: NetworkVisual
   sharePercent: number
   totalBytes?: number | null
-  blocks?: HttpBlockState[]
   onSwitch: (enabled: boolean) => void
 }
 
 const STATUS_TEXT: Record<Exclude<NetworkStatus, 'on'>, string> = {
   off: 'Off',
   offline: 'Not connected',
-  unreachable: 'Can’t reach server',
+  unreachable: 'Can’t reach Steam',
   failed: 'Failed',
   limit: 'Data limit reached'
 }
 
 /** What a network that isn't simply on says: here, and in the downloads list's tooltip. */
 // eslint-disable-next-line react-refresh/only-export-components -- one wording, shared
-export function networkStatusText(
-  status: Exclude<NetworkStatus, 'on'>,
-  transfer: 'http' | 'torrent' | 'steam'
-): string {
-  if (status !== 'unreachable') return STATUS_TEXT[status]
-  return transfer === 'torrent'
-    ? 'Can’t reach peers'
-    : transfer === 'steam'
-      ? 'Can’t reach Steam'
-      : STATUS_TEXT[status]
+export function networkStatusText(status: Exclude<NetworkStatus, 'on'>): string {
+  return STATUS_TEXT[status]
 }
 
 const rowClass = 'col-span-full grid grid-cols-subgrid items-center gap-3'
@@ -83,146 +69,12 @@ function ProgressBar({
   )
 }
 
-function streamProgress(
-  stream: HttpStreamState,
-  blocks?: HttpBlockState[]
-): {
-  block: HttpBlockState | undefined
-  done: boolean
-  size: number
-  downloaded: number
-  percent: number
-} {
-  const block = stream.currentBlockIndex == null ? undefined : blocks?.[stream.currentBlockIndex]
-  const done = stream.status === 'completed' || block?.status === 'completed'
-  const size = block?.rangeEnd == null ? 0 : block.rangeEnd - block.rangeStart + 1
-  const downloaded = block?.bytesDownloaded ?? stream.bytesDownloaded
-  return {
-    block,
-    done,
-    size,
-    downloaded,
-    percent: done ? 100 : size > 0 ? Math.min(100, (downloaded / size) * 100) : 0
-  }
-}
-
-function HttpStreamRows({
-  group,
-  visual,
-  blocks
-}: {
-  group: HttpNetworkGroup
-  visual: NetworkVisual
-  blocks?: HttpBlockState[]
-}): React.JSX.Element {
-  const formatSpeed = useFormatSpeed()
-  return (
-    <>
-      {group.streams.map((stream, index) => {
-        const progress = streamProgress(stream, blocks)
-        const active = stream.status === 'downloading'
-        const status = progress.done
-          ? 'Done'
-          : stream.status === 'paused'
-            ? 'Paused'
-            : stream.status === 'retrying'
-              ? 'Retrying…'
-              : 'Idle'
-        return (
-          <div
-            role="row"
-            key={stream.id}
-            className={`${rowClass} border-[var(--border-subtle)] bg-card py-[6px] font-mono text-[11px] leading-[1.2] ${index === 0 ? 'border-t-[0.5px] pt-[9px]' : ''} ${index === group.streams.length - 1 ? 'border-b-[0.5px] pb-[11px]' : ''}`}
-          >
-            <div role="cell" className="flex justify-center pl-5">
-              <div
-                className="size-[5px] rounded-full"
-                style={{
-                  background: active || progress.done ? visual.solid : 'var(--icon-muted)',
-                  opacity: active || progress.done ? 1 : 0.4
-                }}
-              />
-            </div>
-            <div role="cell" className="flex min-w-0 items-center gap-[6px]">
-              <span className="font-medium whitespace-nowrap text-foreground">
-                Stream #{index + 1}
-              </span>
-              {progress.block && (
-                <span className="rounded-[3px] border-[0.5px] border-border bg-secondary px-[4.5px] py-[1.5px] text-[9px] leading-none whitespace-nowrap text-muted-foreground">
-                  Chunk #{progress.block.index + 1}
-                </span>
-              )}
-              {/* A lit dot and a speed say it's fetching; only what isn't the usual gets a word. */}
-              {active && stream.hedge ? (
-                <Tooltip>
-                  <TooltipTrigger
-                    render={
-                      <ColorBadge
-                        bg={visual.bg}
-                        border={visual.border}
-                        text={visual.text}
-                        tabIndex={0}
-                        className="h-[13px] rounded-[3px] px-[5px] py-px text-[9px] font-semibold tracking-[0.04em] outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
-                      >
-                        BACKUP
-                      </ColorBadge>
-                    }
-                  />
-                  <TooltipContent>
-                    Racing another stream for this chunk, which was running slowly
-                  </TooltipContent>
-                </Tooltip>
-              ) : (
-                !active && (
-                  <span
-                    className={`text-[9.5px] ${stream.status === 'retrying' ? 'text-destructive' : 'text-muted-foreground'}`}
-                  >
-                    {status}
-                  </span>
-                )
-              )}
-            </div>
-            <ProgressBar
-              className="h-[5px]"
-              label={`Stream #${index + 1} progress`}
-              percent={progress.percent}
-              color={visual.solid}
-            />
-            <div
-              role="cell"
-              className="text-right font-mono text-[11px] leading-none font-medium tabular-nums"
-              style={{
-                color: progress.done ? visual.text : active ? 'var(--text)' : 'var(--text-tertiary)'
-              }}
-            >
-              {shareOf(stream.bytesDownloaded, group.bytesDownloaded)}
-            </div>
-            <div
-              role="cell"
-              className="text-right font-mono text-[11px] leading-none font-medium whitespace-nowrap tabular-nums"
-              style={{ color: active ? visual.text : 'var(--text-tertiary)' }}
-            >
-              {active ? formatSpeed(stream.speedBytesPerSec) : '—'}
-            </div>
-            <div
-              role="cell"
-              className="pr-5 text-right font-mono text-[11px] leading-none whitespace-nowrap text-[var(--text-secondary)] tabular-nums"
-            >
-              {formatBytes(stream.bytesDownloaded)}
-            </div>
-          </div>
-        )
-      })}
-    </>
-  )
-}
-
-/** A Steam download's streams: each fetches whole depot chunks from one content server. */
-function SteamStreamRows({
+/** A download's streams: each fetches whole depot chunks from one content server. */
+function StreamRows({
   group,
   visual
 }: {
-  group: SteamNetworkGroup
+  group: NetworkGroup
   visual: NetworkVisual
 }): React.JSX.Element {
   const formatSpeed = useFormatSpeed()
@@ -356,144 +208,22 @@ function SpeedOfLimit({
   )
 }
 
-/** Download, and upload once there is any: the arrows only when both are shown. */
-function TwoWay({
-  down,
-  up,
-  showUp,
-  labels
-}: {
-  down: React.ReactNode
-  up: string
-  showUp: boolean
-  labels: [string, string]
-}): React.JSX.Element {
-  return (
-    <>
-      <div>
-        <span className="sr-only">{labels[0]} </span>
-        {showUp && <span aria-hidden>↓ </span>}
-        {down}
-      </div>
-      {showUp && (
-        <div className="text-muted-foreground">
-          <span className="sr-only">{labels[1]} </span>
-          <span aria-hidden>↑ </span>
-          {up}
-        </div>
-      )}
-    </>
-  )
-}
-
-function PeerRows({
-  group,
-  visual
-}: {
-  group: TorrentNetworkGroup
-  visual: NetworkVisual
-}): React.JSX.Element {
-  const formatSpeed = useFormatSpeed()
-  // What the network's peers have sent between them: each one's share of it.
-  const received = group.peers.reduce((sum, peer) => sum + peer.bytesDownloaded, 0)
-  return (
-    <>
-      {group.peers.map((peer, index) => {
-        const receiving = peer.status === 'receiving' && peer.speedBytesPerSec > 0
-        const sent = peer.bytesUploaded > 0
-        return (
-          <div
-            role="row"
-            key={peer.id}
-            className={`${rowClass} border-[var(--border-subtle)] bg-card py-[6px] font-mono text-[11px] leading-[1.2] ${index === 0 ? 'border-t-[0.5px] pt-[9px]' : ''} ${index === group.peers.length - 1 ? 'border-b-[0.5px] pb-[11px]' : ''}`}
-          >
-            <div role="cell" className="flex justify-center pl-5">
-              {/* Its state, with its speed: no word needed beside it. */}
-              <div
-                role="img"
-                aria-label={receiving ? 'Receiving' : 'Idle'}
-                className="size-[5px] rounded-full"
-                style={{
-                  background: receiving ? visual.solid : 'var(--icon-muted)',
-                  opacity: receiving ? 1 : 0.4
-                }}
-              />
-            </div>
-            <div role="cell" className="flex min-w-0 items-center gap-[6px]">
-              <span className="font-medium whitespace-nowrap text-foreground">
-                {/* Unique in the download: a number is never another peer's, here or on
-                    another network. */}
-                Peer #{peer.id + 1}
-              </span>
-              {/* The client it runs, as a stream shows its chunk. */}
-              {peer.client && (
-                <span className="min-w-0 truncate rounded-[3px] border-[0.5px] border-border bg-secondary px-[4.5px] py-[1.5px] text-[9px] leading-none whitespace-nowrap text-muted-foreground">
-                  {peer.client}
-                </span>
-              )}
-            </div>
-            {/* A peer has no progress of its own: a piece counts once verified, and several
-                peers may send parts of one. */}
-            <div role="cell" className="text-muted-foreground">
-              —
-            </div>
-            <div
-              role="cell"
-              className="text-right font-mono text-[11px] leading-none font-medium tabular-nums"
-              style={{ color: receiving ? 'var(--text)' : 'var(--text-tertiary)' }}
-            >
-              {shareOf(peer.bytesDownloaded, received)}
-            </div>
-            <div
-              role="cell"
-              className="text-right font-mono text-[11px] leading-[1.35] font-medium whitespace-nowrap tabular-nums"
-              style={{ color: receiving ? visual.text : 'var(--text-tertiary)' }}
-            >
-              <TwoWay
-                down={receiving ? formatSpeed(peer.speedBytesPerSec) : '—'}
-                up={
-                  peer.uploadSpeedBytesPerSec > 0 ? formatSpeed(peer.uploadSpeedBytesPerSec) : '—'
-                }
-                showUp={sent}
-                labels={['Receiving at', 'Sending at']}
-              />
-            </div>
-            <div
-              role="cell"
-              className="pr-5 text-right font-mono text-[11px] leading-[1.35] whitespace-nowrap text-[var(--text-secondary)] tabular-nums"
-            >
-              <TwoWay
-                down={formatBytes(peer.bytesDownloaded)}
-                up={formatBytes(peer.bytesUploaded)}
-                showUp={sent}
-                labels={['Received', 'Sent']}
-              />
-            </div>
-          </div>
-        )
-      })}
-    </>
-  )
-}
-
 export function NetworkRow({
   group,
   visual,
   sharePercent,
   totalBytes,
-  blocks,
   onSwitch
 }: NetworkRowProps): React.JSX.Element {
   const formatSpeed = useFormatSpeed()
   const speedUnit = useAppStore((store) => store.speedUnit)
   const speedLimit = useAppStore((store) => store.networkPreferences[group.id]?.speedLimit)
   const [expanded, setExpanded] = useState(false)
-  const connections = group.transfer === 'torrent' ? group.peers : group.streams
+  const connections = group.streams
   const isActive = networkActive(group)
   const hasError = group.status === 'failed'
   const rounded = Math.round(sharePercent)
   const shareLabel = group.bytesDownloaded === 0 ? '0%' : rounded === 0 ? '<1%' : `${rounded}%`
-  const noun = group.transfer === 'torrent' ? 'peer' : 'stream'
   return (
     <>
       <div
@@ -536,7 +266,7 @@ export function NetworkRow({
               aria-expanded={expanded}
               className="h-auto cursor-default rounded-[4px] border-[0.5px] bg-card px-[7px] py-[3px] font-mono text-[10.5px] leading-none font-medium text-[var(--text-secondary)] aria-expanded:bg-secondary dark:bg-card"
             >
-              {connections.length} {noun}
+              {connections.length} stream
               {connections.length === 1 ? '' : 's'}{' '}
               <span aria-hidden className="text-[7.5px] opacity-75">
                 {expanded ? '▲' : '▼'}
@@ -551,7 +281,7 @@ export function NetworkRow({
                     tabIndex={group.error ? 0 : undefined}
                     className={`rounded-sm font-mono text-[10px] whitespace-nowrap outline-none ${hasError ? 'text-destructive' : 'text-muted-foreground'}`}
                   >
-                    {networkStatusText(group.status, group.transfer)}
+                    {networkStatusText(group.status)}
                   </span>
                 }
               />
@@ -581,53 +311,30 @@ export function NetworkRow({
           className="text-right font-mono text-[11px] leading-[1.35] font-semibold whitespace-nowrap tabular-nums"
           style={{ color: isActive ? visual.text : 'var(--text-tertiary)' }}
         >
-          <TwoWay
-            down={
-              speedLimit === undefined ? (
-                isActive ? (
-                  formatSpeed(group.speedBytesPerSec)
-                ) : (
-                  '—'
-                )
-              ) : (
-                <SpeedOfLimit
-                  speed={isActive ? group.speedBytesPerSec : 0}
-                  limit={speedLimit}
-                  unit={speedUnit}
-                />
-              )
-            }
-            // Like down: a dash while nothing is going out. Each direction is idle on its own.
-            up={
-              group.transfer === 'torrent' && group.uploadSpeedBytesPerSec > 0
-                ? formatSpeed(group.uploadSpeedBytesPerSec)
-                : '—'
-            }
-            // Always for a torrent, so it's plain each network uploads too.
-            showUp={group.transfer === 'torrent'}
-            labels={['Downloading at', 'Uploading at']}
-          />
+          <span className="sr-only">Downloading at </span>
+          {speedLimit === undefined ? (
+            isActive ? (
+              formatSpeed(group.speedBytesPerSec)
+            ) : (
+              '—'
+            )
+          ) : (
+            <SpeedOfLimit
+              speed={isActive ? group.speedBytesPerSec : 0}
+              limit={speedLimit}
+              unit={speedUnit}
+            />
+          )}
         </div>
         <div
           role="cell"
           className="pr-5 text-right font-mono text-[11.5px] leading-[1.35] text-[var(--text-secondary)] tabular-nums"
         >
-          <TwoWay
-            down={formatBytes(group.bytesDownloaded)}
-            up={formatBytes(group.transfer === 'torrent' ? group.bytesUploaded : 0)}
-            showUp={group.transfer === 'torrent'}
-            labels={['Downloaded', 'Uploaded']}
-          />
+          <span className="sr-only">Downloaded </span>
+          {formatBytes(group.bytesDownloaded)}
         </div>
       </div>
-      {expanded &&
-        (group.transfer === 'http' ? (
-          <HttpStreamRows group={group} visual={visual} blocks={blocks} />
-        ) : group.transfer === 'steam' ? (
-          <SteamStreamRows group={group} visual={visual} />
-        ) : (
-          <PeerRows group={group} visual={visual} />
-        ))}
+      {expanded && <StreamRows group={group} visual={visual} />}
     </>
   )
 }

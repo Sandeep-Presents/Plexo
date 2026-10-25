@@ -108,7 +108,7 @@ test.describe('steam lifecycle', () => {
     await plexo.waitForSteamStatus('completed')
   })
 
-  test('quit and relaunched, it resumes once Steam is logged in again', async ({
+  test('quit and relaunched, it goes on by itself once Steam is logged in again', async ({
     plexo,
     serveSteam
   }) => {
@@ -129,7 +129,6 @@ test.describe('steam lifecycle', () => {
     expect(stopped.chunksDone).toBeGreaterThan(0)
 
     await plexo.loginSteam()
-    await plexo.api.resumeDownload(id)
     await plexo.waitForSteamStatus('completed')
   })
 
