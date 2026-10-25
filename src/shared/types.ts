@@ -151,6 +151,14 @@ export interface TorrentPieceState extends WorkUnitState {
   provisionalBytes: number
 }
 
+/** A Steam download's grid square: a run of its depot chunks, about equal in download bytes. A
+ * game has tens of thousands of chunks, too many to draw (or send) one by one. Its range is in
+ * download bytes, the chunks' compressed sizes laid end to end, not in any one file. */
+export interface SteamCellState extends WorkUnitState {
+  kind: 'steam'
+  status: HttpBlockStatus
+}
+
 export type DownloadUnitState = HttpBlockState | TorrentPieceState
 
 /**

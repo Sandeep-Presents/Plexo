@@ -35,6 +35,23 @@ export default defineConfig(
     rules: { 'react-hooks/rules-of-hooks': 'off' }
   },
   {
+    // The Steam modules that are pure functions of their input: the e2e specs load them in plain
+    // Node and the chunk worker loads them in a worker thread, neither of which has Electron's
+    // `app` (which testKnobs reads as it loads) or resolves electron-vite's `?` imports.
+    files: [
+      'src/main/steam/{appInfo,cells,chunkCodec,crypto,layout,lzma,manifest,redact,scheduler,zip}.ts'
+    ],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: ['electron'],
+          patterns: ['**/testKnobs', '*\\?*']
+        }
+      ]
+    }
+  },
+  {
     // Plain JavaScript that runs as-is — the download page's script, and the CommonJS and ES module
     // scripts that Electron and node load directly — so TypeScript's conventions (return types,
     // import syntax) don't apply.
