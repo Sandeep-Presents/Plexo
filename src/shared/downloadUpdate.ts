@@ -20,6 +20,21 @@ export function applyDownloadUpdate(
     return { ...state, blocks: changed, seq }
   }
 
+  if ('cells' in update) {
+    const { state, cells: changed, seq } = update
+    if (current?.id === state.id && current.kind === 'steam') {
+      if ((current.seq ?? 0) >= seq) return current
+      let cells = current.cells
+      if (changed.length > 0) {
+        cells = [...cells]
+        for (const cell of changed) cells[cell.index] = cell
+      }
+      return { ...state, cells, seq }
+    }
+    if (changed.length < state.totalCells) return current
+    return { ...state, cells: changed, seq }
+  }
+
   const { state, pieces: changed, seq } = update
   if (current?.id === state.id && current.kind === 'torrent') {
     if ((current.seq ?? 0) >= seq) return current

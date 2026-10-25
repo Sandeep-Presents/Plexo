@@ -13,6 +13,7 @@ import { ScheduleIndicator } from '../components/ScheduleIndicator'
 import { networkStatusText } from '../components/NetworkRow'
 import { scheduleMessage, scheduleWindow } from '@shared/downloadSchedule'
 import { NetworksMenu } from '../components/NetworksMenu'
+import { SteamBadge } from '../components/SteamBadge'
 import { TorrentBadge } from '../components/TorrentBadge'
 import { Button } from '../components/ui/button'
 import { Checkbox } from '../components/ui/checkbox'
@@ -574,6 +575,7 @@ const DownloadRow = memo(function DownloadRow({
               {item.fileName}
             </span>
             {item.kind === 'torrent' && <TorrentBadge />}
+            {item.kind === 'steam' && <SteamBadge />}
             {(dots || speed) && (
               <div className="ml-auto flex shrink-0 items-center gap-2.5 pl-2">
                 {dots && (

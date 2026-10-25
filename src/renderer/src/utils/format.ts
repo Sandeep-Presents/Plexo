@@ -5,6 +5,8 @@ import type {
   HttpDownloadNetwork,
   HttpDownloadState,
   SpeedUnit,
+  SteamDownloadNetwork,
+  SteamDownloadState,
   TorrentDownloadNetwork,
   TorrentDownloadState
 } from '@shared/types'
@@ -153,9 +155,9 @@ export function fileNameFromPath(path: string): string {
 }
 
 /** Short uppercase file-type badge from a name's extension, e.g. "Xcode_16.2.xip" -> "XIP", "photo.jpeg" -> "JPEG". */
-/** A download that is a folder: a torrent's, of its files. */
+/** A download that is a folder: a torrent's, of its files, or a Steam install. */
 export function isFolder(download: DownloadState | FinishedDownload): boolean {
-  return download.kind === 'torrent' && download.folder
+  return download.kind === 'steam' || (download.kind === 'torrent' && download.folder)
 }
 
 export function fileExtensionBadge(fileName: string): string {
@@ -223,10 +225,20 @@ export interface TorrentNetworkGroup extends TorrentDownloadNetwork {
   peers: TorrentDownloadState['peers']
 }
 
-export type NetworkGroup = HttpNetworkGroup | TorrentNetworkGroup
+export interface SteamNetworkGroup extends SteamDownloadNetwork {
+  streams: SteamDownloadState['streams']
+}
+
+export type NetworkGroup = HttpNetworkGroup | TorrentNetworkGroup | SteamNetworkGroup
 
 export function groupByNetwork(download: DownloadState): NetworkGroup[] {
   if (download.kind === 'http') {
+    return download.networks.map((network) => ({
+      ...network,
+      streams: download.streams.filter((stream) => stream.interfaceId === network.id)
+    }))
+  }
+  if (download.kind === 'steam') {
     return download.networks.map((network) => ({
       ...network,
       streams: download.streams.filter((stream) => stream.interfaceId === network.id)
@@ -248,9 +260,9 @@ export function networksInPlay<T extends DownloadNetwork>(networks: T[]): T[] {
  * receiving. Read from connection status rather than speed, so every view of a download agrees
  * on which networks are live even between speed samples. */
 export function networkActive(group: NetworkGroup): boolean {
-  return group.transfer === 'http'
-    ? group.streams.some((stream) => stream.status === 'downloading')
-    : group.peers.some((peer) => peer.status === 'receiving')
+  return group.transfer === 'torrent'
+    ? group.peers.some((peer) => peer.status === 'receiving')
+    : group.streams.some((stream) => stream.status === 'downloading')
 }
 
 /** Shortens an absolute path under the user's home directory to a "~/..." form for display. */

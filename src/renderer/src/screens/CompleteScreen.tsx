@@ -52,7 +52,9 @@ export function CompleteScreen({
       ? download.unitsWritten
       : download.kind === 'torrent'
         ? download.pieces.filter((piece) => piece.status !== 'skipped').length
-        : download.totalBlocks
+        : download.kind === 'steam'
+          ? download.totalChunks
+          : download.totalBlocks
   const files = isTorrent && download.files.total > 1 ? download.files : null
 
   return (

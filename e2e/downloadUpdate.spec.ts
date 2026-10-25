@@ -3,6 +3,8 @@ import { applyDownloadUpdate } from '../src/shared/downloadUpdate'
 import type {
   HttpBlockState,
   HttpDownloadUpdate,
+  SteamCellState,
+  SteamDownloadUpdate,
   TorrentDownloadUpdate,
   TorrentPieceState
 } from '../src/shared/types'
@@ -120,5 +122,49 @@ test.describe('download updates', () => {
     if (next?.kind !== 'torrent') throw new Error('Expected torrent state')
     expect(next.pieces.map((entry) => entry.provisionalBytes)).toEqual([0, 40])
     expect(next.peers).toEqual([])
+  })
+
+  test('Steam cell updates merge on the cells already there, and need a snapshot first', () => {
+    const cell = (index: number, bytesDownloaded = 0): SteamCellState => ({
+      kind: 'steam',
+      index,
+      rangeStart: index * 100,
+      rangeEnd: index * 100 + 99,
+      status: bytesDownloaded === 100 ? 'completed' : 'pending',
+      bytesDownloaded,
+      bytesByInterface: bytesDownloaded ? { a: bytesDownloaded } : {}
+    })
+    const steamUpdate = (seq: number, cells: SteamCellState[]): SteamDownloadUpdate => ({
+      seq,
+      state: {
+        kind: 'steam',
+        id: 'game',
+        url: 'steam://app/480',
+        fileName: 'Spacewar',
+        destinationPath: '/tmp/Spacewar',
+        totalBytes: 300,
+        bytesDownloaded: 0,
+        speedBytesPerSec: 0,
+        status: 'downloading',
+        networks: [],
+        streams: [],
+        peakStreams: 0,
+        totalCells: 3,
+        totalChunks: 30,
+        chunksDone: 0,
+        app: { appId: 480, name: 'Spacewar', branch: 'public' },
+        depots: [],
+        fileCount: 2,
+        installBytes: 1000,
+        startedAt: 0
+      },
+      cells
+    })
+    expect(applyDownloadUpdate(null, steamUpdate(1, [cell(0)]))).toBeNull()
+    const start = applyDownloadUpdate(null, steamUpdate(1, [cell(0), cell(1), cell(2)]))
+    const next = applyDownloadUpdate(start, steamUpdate(2, [cell(2, 100)]))
+    if (next?.kind !== 'steam') throw new Error('Expected Steam state')
+    expect(next.cells.map((entry) => entry.bytesDownloaded)).toEqual([0, 0, 100])
+    expect(applyDownloadUpdate(next, steamUpdate(2, [cell(0, 50)]))).toBe(next)
   })
 })

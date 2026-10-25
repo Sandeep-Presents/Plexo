@@ -30,10 +30,12 @@ export const isCancellable = (item: DownloadItem): item is DownloadState =>
   !isFinished(item) && ['downloading', 'queued', 'paused'].includes(item.status)
 /** Finished, but its file is no longer where it was saved. */
 export const isMissing = (item: DownloadItem): boolean => isFinished(item) && !!item.missing
-/** Finished, with its file (or a torrent's own files) still there to move to the Trash. */
+/** Finished, with its file (or a torrent's own files) still there to move to the Trash. A Steam
+ * game installed into a folder that was already there is never trashed (see trashDownload). */
 export const isTrashable = (item: DownloadItem): boolean =>
   isDone(item) &&
   !isMissing(item) &&
+  !(item.kind === 'steam' && item.adopted) &&
   (item.kind !== 'torrent' || !item.folder || !isFinished(item) || !!item.downloadedFiles?.length)
 
 /** What a failed download can do next. `fix`: its link stopped working, a fresh one carries on
@@ -44,6 +46,9 @@ export type FailureAction = 'fix' | 'retry' | 'again'
 
 export function failureAction(download: DownloadState): FailureAction {
   if (linkExpired(download)) return 'fix'
+  // A Steam install keeps its files and plan from the start: one that can go on does, even with
+  // nothing fetched yet (it may only have been waiting for a login).
+  if (download.kind === 'steam') return download.resumable !== false ? 'retry' : 'again'
   return download.resumable !== false && download.bytesDownloaded > 0 ? 'retry' : 'again'
 }
 

@@ -897,6 +897,9 @@ export class DownloadManager {
 
   async start(requestPayload: StartDownloadRequest): Promise<string> {
     await this.initialization
+    if (requestPayload.kind === 'steam') {
+      throw new Error('Steam downloads aren’t available in this build.')
+    }
     if (requestPayload.kind === 'http' && requestPayload.browser !== undefined) {
       const browser = browserContextFrom(requestPayload.browser)
       if (!browser) throw new Error('The browser’s details for this download couldn’t be read.')

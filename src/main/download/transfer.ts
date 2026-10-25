@@ -6,6 +6,9 @@ import type {
   HttpDownloadState,
   StartHttpDownloadRequest,
   StartTorrentDownloadRequest,
+  SteamCellState,
+  SteamDownloadState,
+  SteamRequestPayload,
   TorrentDownloadState,
   TorrentPieceState
 } from '../../shared/types'
@@ -65,7 +68,15 @@ export interface TorrentTransferTarget extends TransferTargetBase {
   uploadMeters: Meters
 }
 
-export type TransferTarget = HttpTransferTarget | TorrentTransferTarget
+export interface SteamTransferTarget extends TransferTargetBase {
+  state: SteamDownloadState
+  requestPayload: SteamRequestPayload
+  cells: SteamCellState[]
+  /** What each stream, and each network, has received (see updateSpeeds). */
+  meters: Meters
+}
+
+export type TransferTarget = HttpTransferTarget | TorrentTransferTarget | SteamTransferTarget
 
 /** What a transfer asks of the manager. */
 export interface TransferHost {
@@ -148,7 +159,7 @@ export function updateSpeeds(runtime: TransferTarget, now: number): boolean {
     target[key] = value
   }
   const connections: Array<{ id: number; status: string; speedBytesPerSec: number }> =
-    state.kind === 'http' ? state.streams : state.peers
+    state.kind === 'torrent' ? state.peers : state.streams
   for (const connection of connections) {
     // Read every tick, moving or not, so its window is never stale when it moves again.
     const speed = runtime.meters.connections.get(connection.id)?.read(now) ?? 0
@@ -220,10 +231,10 @@ export function updateTimeLeft(state: DownloadState, elapsedSeconds: number): bo
 export function clearSpeeds(state: DownloadState): void {
   state.speedBytesPerSec = 0
   state.timeLeftSeconds = undefined
-  const connections = state.kind === 'http' ? state.streams : state.peers
+  const connections = state.kind === 'torrent' ? state.peers : state.streams
   for (const connection of connections) connection.speedBytesPerSec = 0
   for (const network of state.networks) network.speedBytesPerSec = 0
-  if (state.kind === 'http') state.diskLimited = undefined
+  if (state.kind !== 'torrent') state.diskLimited = undefined
   if (state.kind === 'torrent') {
     state.uploadSpeedBytesPerSec = 0
     for (const network of state.networks) network.uploadSpeedBytesPerSec = 0

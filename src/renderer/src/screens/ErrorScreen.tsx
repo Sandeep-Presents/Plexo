@@ -130,20 +130,29 @@ export function ErrorScreen({ download }: { download: DownloadState }): React.JS
             </div>
           </div>
 
-          <div className="flex w-full min-w-0 items-center gap-2 border-t-[0.5px] border-border pt-3">
-            <div className="min-w-0 flex-1 text-left font-mono text-[11px] leading-none text-muted-foreground">
-              <TruncatedText text={download.url} />
+          {download.kind === 'steam' ? (
+            // A Steam download has no link to copy: it comes from the account's own library.
+            <div className="flex w-full min-w-0 items-center gap-2 border-t-[0.5px] border-border pt-3">
+              <div className="min-w-0 flex-1 text-left font-mono text-[11px] leading-none text-muted-foreground">
+                <TruncatedText text={`Steam app ${download.app.appId} · ${download.app.branch}`} />
+              </div>
             </div>
-            <button
-              type="button"
-              onClick={handleCopyUrl}
-              className={`min-h-6 shrink-0 border-none bg-transparent px-1 py-0.5 font-mono text-[11px] leading-none ${
-                copied ? 'text-[var(--color-success)]' : 'text-primary'
-              }`}
-            >
-              {copied ? 'Copied' : 'Copy link'}
-            </button>
-          </div>
+          ) : (
+            <div className="flex w-full min-w-0 items-center gap-2 border-t-[0.5px] border-border pt-3">
+              <div className="min-w-0 flex-1 text-left font-mono text-[11px] leading-none text-muted-foreground">
+                <TruncatedText text={download.url} />
+              </div>
+              <button
+                type="button"
+                onClick={handleCopyUrl}
+                className={`min-h-6 shrink-0 border-none bg-transparent px-1 py-0.5 font-mono text-[11px] leading-none ${
+                  copied ? 'text-[var(--color-success)]' : 'text-primary'
+                }`}
+              >
+                {copied ? 'Copied' : 'Copy link'}
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </div>

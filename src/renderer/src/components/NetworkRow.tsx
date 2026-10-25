@@ -1,7 +1,12 @@
 import type { HttpBlockState, HttpStreamState, NetworkStatus, SpeedUnit } from '@shared/types'
 import { useState } from 'react'
 import { DANGER, type NetworkVisual } from '../theme'
-import type { HttpNetworkGroup, NetworkGroup, TorrentNetworkGroup } from '../utils/format'
+import type {
+  HttpNetworkGroup,
+  NetworkGroup,
+  SteamNetworkGroup,
+  TorrentNetworkGroup
+} from '../utils/format'
 import { describeError, formatBytes, formatSpeedOfLimit, networkActive } from '../utils/format'
 import { useFormatSpeed } from '../hooks/useFormatSpeed'
 import { useAppStore } from '../store/useAppStore'
@@ -33,11 +38,14 @@ const STATUS_TEXT: Record<Exclude<NetworkStatus, 'on'>, string> = {
 // eslint-disable-next-line react-refresh/only-export-components -- one wording, shared
 export function networkStatusText(
   status: Exclude<NetworkStatus, 'on'>,
-  transfer: 'http' | 'torrent'
+  transfer: 'http' | 'torrent' | 'steam'
 ): string {
-  return status === 'unreachable' && transfer === 'torrent'
+  if (status !== 'unreachable') return STATUS_TEXT[status]
+  return transfer === 'torrent'
     ? 'Can’t reach peers'
-    : STATUS_TEXT[status]
+    : transfer === 'steam'
+      ? 'Can’t reach Steam'
+      : STATUS_TEXT[status]
 }
 
 const rowClass = 'col-span-full grid grid-cols-subgrid items-center gap-3'
@@ -185,6 +193,109 @@ function HttpStreamRows({
               className="text-right font-mono text-[11px] leading-none font-medium tabular-nums"
               style={{
                 color: progress.done ? visual.text : active ? 'var(--text)' : 'var(--text-tertiary)'
+              }}
+            >
+              {shareOf(stream.bytesDownloaded, group.bytesDownloaded)}
+            </div>
+            <div
+              role="cell"
+              className="text-right font-mono text-[11px] leading-none font-medium whitespace-nowrap tabular-nums"
+              style={{ color: active ? visual.text : 'var(--text-tertiary)' }}
+            >
+              {active ? formatSpeed(stream.speedBytesPerSec) : '—'}
+            </div>
+            <div
+              role="cell"
+              className="pr-5 text-right font-mono text-[11px] leading-none whitespace-nowrap text-[var(--text-secondary)] tabular-nums"
+            >
+              {formatBytes(stream.bytesDownloaded)}
+            </div>
+          </div>
+        )
+      })}
+    </>
+  )
+}
+
+/** A Steam download's streams: each fetches whole depot chunks from one content server. */
+function SteamStreamRows({
+  group,
+  visual
+}: {
+  group: SteamNetworkGroup
+  visual: NetworkVisual
+}): React.JSX.Element {
+  const formatSpeed = useFormatSpeed()
+  return (
+    <>
+      {group.streams.map((stream, index) => {
+        const active = stream.status === 'downloading'
+        const done = stream.status === 'completed'
+        const percent = done
+          ? 100
+          : stream.chunkBytes
+            ? Math.min(100, ((stream.chunkReceived ?? 0) / stream.chunkBytes) * 100)
+            : 0
+        const status = done
+          ? 'Done'
+          : stream.status === 'paused'
+            ? 'Paused'
+            : stream.status === 'retrying'
+              ? 'Retrying…'
+              : 'Idle'
+        return (
+          <div
+            role="row"
+            key={stream.id}
+            className={`${rowClass} border-[var(--border-subtle)] bg-card py-[6px] font-mono text-[11px] leading-[1.2] ${index === 0 ? 'border-t-[0.5px] pt-[9px]' : ''} ${index === group.streams.length - 1 ? 'border-b-[0.5px] pb-[11px]' : ''}`}
+          >
+            <div role="cell" className="flex justify-center pl-5">
+              <div
+                className="size-[5px] rounded-full"
+                style={{
+                  background: active || done ? visual.solid : 'var(--icon-muted)',
+                  opacity: active || done ? 1 : 0.4
+                }}
+              />
+            </div>
+            <div role="cell" className="flex min-w-0 items-center gap-[6px]">
+              <span className="font-medium whitespace-nowrap text-foreground">
+                Stream #{index + 1}
+              </span>
+              <TruncatedText
+                className="min-w-0 text-[9.5px] text-muted-foreground"
+                text={stream.host}
+              />
+              {active && stream.hedge ? (
+                <ColorBadge
+                  bg={visual.bg}
+                  border={visual.border}
+                  text={visual.text}
+                  className="h-[13px] rounded-[3px] px-[5px] py-px text-[9px] font-semibold tracking-[0.04em]"
+                >
+                  BACKUP
+                </ColorBadge>
+              ) : (
+                !active && (
+                  <span
+                    className={`text-[9.5px] ${stream.status === 'retrying' ? 'text-destructive' : 'text-muted-foreground'}`}
+                  >
+                    {status}
+                  </span>
+                )
+              )}
+            </div>
+            <ProgressBar
+              className="h-[5px]"
+              label={`Stream #${index + 1} progress`}
+              percent={percent}
+              color={visual.solid}
+            />
+            <div
+              role="cell"
+              className="text-right font-mono text-[11px] leading-none font-medium tabular-nums"
+              style={{
+                color: done ? visual.text : active ? 'var(--text)' : 'var(--text-tertiary)'
               }}
             >
               {shareOf(stream.bytesDownloaded, group.bytesDownloaded)}
@@ -377,12 +488,12 @@ export function NetworkRow({
   const speedUnit = useAppStore((store) => store.speedUnit)
   const speedLimit = useAppStore((store) => store.networkPreferences[group.id]?.speedLimit)
   const [expanded, setExpanded] = useState(false)
-  const connections = group.transfer === 'http' ? group.streams : group.peers
+  const connections = group.transfer === 'torrent' ? group.peers : group.streams
   const isActive = networkActive(group)
   const hasError = group.status === 'failed'
   const rounded = Math.round(sharePercent)
   const shareLabel = group.bytesDownloaded === 0 ? '0%' : rounded === 0 ? '<1%' : `${rounded}%`
-  const noun = group.transfer === 'http' ? 'stream' : 'peer'
+  const noun = group.transfer === 'torrent' ? 'peer' : 'stream'
   return (
     <>
       <div
@@ -512,6 +623,8 @@ export function NetworkRow({
       {expanded &&
         (group.transfer === 'http' ? (
           <HttpStreamRows group={group} visual={visual} blocks={blocks} />
+        ) : group.transfer === 'steam' ? (
+          <SteamStreamRows group={group} visual={visual} />
         ) : (
           <PeerRows group={group} visual={visual} />
         ))}

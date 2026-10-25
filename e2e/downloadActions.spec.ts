@@ -105,6 +105,27 @@ test.describe('what each state offers', () => {
     const torrent = download({ status: 'paused', kind: 'torrent', url: '/tmp/a.torrent' })
     expect(ids([torrent])).toEqual(['resume', 'reveal', 'cancel'])
   })
+
+  test('a Steam download has no link to copy, and one that can go on is retried even from nothing', () => {
+    const steam = (
+      patch: Partial<DownloadState> & { status: DownloadState['status'] }
+    ): DownloadItem => download({ kind: 'steam', url: 'steam://app/480', ...patch } as never)
+    expect(ids([steam({ status: 'paused' })])).toEqual(['resume', 'reveal', 'cancel'])
+    // Waiting on a login, with nothing fetched yet: it goes on rather than starting over.
+    expect(failureAction(steam({ status: 'error', bytesDownloaded: 0 }) as DownloadState)).toBe(
+      'retry'
+    )
+    expect(failureAction(steam({ status: 'error', resumable: false }) as DownloadState)).toBe(
+      'again'
+    )
+    expect(ids([steam({ status: 'completed' })])).toEqual(['open', 'reveal', 'remove', 'trash'])
+    // Installed into a folder that was already there: never trashed.
+    expect(ids([steam({ status: 'completed', adopted: true } as never)])).toEqual([
+      'open',
+      'reveal',
+      'remove'
+    ])
+  })
 })
 
 test.describe('several selected', () => {

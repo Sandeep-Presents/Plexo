@@ -159,7 +159,7 @@ export interface SteamCellState extends WorkUnitState {
   status: HttpBlockStatus
 }
 
-export type DownloadUnitState = HttpBlockState | TorrentPieceState
+export type DownloadUnitState = HttpBlockState | TorrentPieceState | SteamCellState
 
 /**
  * - on: in use.
@@ -202,7 +202,11 @@ export interface TorrentDownloadNetwork extends DownloadNetworkBase {
   uploadSpeedBytesPerSec: number
 }
 
-export type DownloadNetwork = HttpDownloadNetwork | TorrentDownloadNetwork
+export interface SteamDownloadNetwork extends DownloadNetworkBase {
+  transfer: 'steam'
+}
+
+export type DownloadNetwork = HttpDownloadNetwork | TorrentDownloadNetwork | SteamDownloadNetwork
 
 interface DownloadStateBase {
   id: string
@@ -270,12 +274,58 @@ export interface TorrentDownloadState extends DownloadStateBase {
   uploadSpeedBytesPerSec: number
 }
 
-export type DownloadState = HttpDownloadState | TorrentDownloadState
+/** One connection to a Steam content server, through one network: an HTTP stream that fetches
+ * whole depot chunks. */
+export interface SteamStreamState {
+  id: number
+  interfaceId: string
+  /** The content server it asks. */
+  host: string
+  status: HttpStreamStatus
+  /** Chunk bytes it delivered that were new: a lost race isn't counted. */
+  bytesDownloaded: number
+  speedBytesPerSec: number
+  /** The grid cell of the chunk it is fetching; unset whenever it holds none. */
+  currentCellIndex?: number
+  /** How far it has got with that chunk, and the chunk's size. */
+  chunkReceived?: number
+  chunkBytes?: number
+  /** Racing another stream for the chunk, as an HTTP stream's hedge does. */
+  hedge?: boolean
+}
+
+/** A game (or any app) installed from Steam: its chosen depots' files, in a folder of its own.
+ * Sizes count download bytes (what content servers send, compressed and encrypted); the install
+ * is `installBytes` on disk. */
+export interface SteamDownloadState extends DownloadStateBase {
+  kind: 'steam'
+  networks: SteamDownloadNetwork[]
+  streams: SteamStreamState[]
+  peakStreams: number
+  cells: SteamCellState[]
+  totalCells: number
+  totalChunks: number
+  chunksDone: number
+  app: { appId: number; name: string; branch: string; buildId?: string }
+  depots: { depotId: number; manifestId: string; name: string }[]
+  fileCount: number
+  installBytes: number
+  /** Installed into a folder that already existed: removing it never trashes the folder, and
+   * cancelling only removes what this download created. */
+  adopted?: boolean
+  /** What a run is doing before its chunks come in: making the install's files and folders. */
+  phase?: 'preparing'
+  diskLimited?: boolean
+}
+
+export type DownloadState = HttpDownloadState | TorrentDownloadState | SteamDownloadState
 
 /** A finished download as history keeps it: its state without the work units and connections,
  * which only a running download needs. */
 export type FinishedDownload = (
-  Omit<HttpDownloadState, 'blocks' | 'streams'> | Omit<TorrentDownloadState, 'pieces' | 'peers'>
+  | Omit<HttpDownloadState, 'blocks' | 'streams'>
+  | Omit<TorrentDownloadState, 'pieces' | 'peers'>
+  | Omit<SteamDownloadState, 'cells' | 'streams'>
 ) & {
   /** The blocks or pieces it was written in (a torrent's: those its chosen files needed). */
   unitsWritten: number
@@ -301,7 +351,13 @@ export interface TorrentDownloadUpdate {
   pieces: TorrentPieceState[]
 }
 
-export type DownloadUpdate = HttpDownloadUpdate | TorrentDownloadUpdate
+export interface SteamDownloadUpdate {
+  seq: number
+  state: Omit<SteamDownloadState, 'cells'>
+  cells: SteamCellState[]
+}
+
+export type DownloadUpdate = HttpDownloadUpdate | TorrentDownloadUpdate | SteamDownloadUpdate
 
 /** User customization for one physical network, keyed by NetworkInterfaceInfo.id — lets a
  * cryptic OS device name (e.g. "feth0") get a real label, and a color distinct from its
@@ -455,4 +511,29 @@ export interface StartTorrentDownloadRequest extends StartDownloadRequestBase {
   selectedFiles?: number[]
 }
 
-export type StartDownloadRequest = StartHttpDownloadRequest | StartTorrentDownloadRequest
+/** A Steam download worked out by steamPrepare (see SteamPlan). */
+export interface StartSteamDownloadRequest {
+  kind: 'steam'
+  planId: string
+  /** The networks to start on. Every other one starts switched off. */
+  interfaceIds: string[]
+  /** Streams per network the user picked; left out, the count is decided automatically. */
+  streamsPerNetwork?: number
+}
+
+/** What a Steam download saves to be resumed: what it installs, from what, and where. Never a
+ * key or token; those are asked of Steam again each run. */
+export interface SteamRequestPayload {
+  kind: 'steam'
+  appId: number
+  branch: string
+  /** In the order they are installed: a later depot's copy of a file wins. */
+  depots: { depotId: number; manifestId: string }[]
+  /** The folder the install folder is in. */
+  destinationDir: string
+  interfaceIds: string[]
+  streamsPerNetwork?: number
+}
+
+export type StartDownloadRequest =
+  StartHttpDownloadRequest | StartTorrentDownloadRequest | StartSteamDownloadRequest

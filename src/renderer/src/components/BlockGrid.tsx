@@ -18,6 +18,11 @@ import { formatBytes, type NetworkGroup } from '../utils/format'
 // grouping, no averaging — square #7 is chunk #7, so a hovered square points at exactly the work
 // one stream did and the two views can be read against each other directly.
 //
+// A Steam download is the one exception: a game is tens of thousands of depot chunks of about a
+// megabyte, far too many to draw or send, so its squares are "parts", runs of chunks of about
+// equal download bytes (see main/steam/cells.ts), and a square no longer points at one stream's
+// work.
+//
 // A big file therefore makes a tall grid rather than a coarser one. Past MAX_VISIBLE_ROWS the
 // grid scrolls instead of growing without bound or shrinking its squares: keeping the squares at
 // a fixed size is what keeps them the same unit of meaning on every download, and the scroll
@@ -160,8 +165,9 @@ interface BlockGridProps {
   knownSize: boolean
   remainingBytes: number
   isPaused?: boolean
-  /** A torrent's grid: its blocks are the torrent's pieces. */
-  pieces?: boolean
+  /** What one square is: an HTTP download's chunk, a torrent's piece, a part of a Steam
+   * download's chunks. */
+  unit?: 'Chunk' | 'Piece' | 'Part'
 }
 
 export function BlockGrid({
@@ -171,9 +177,8 @@ export function BlockGrid({
   knownSize,
   remainingBytes,
   isPaused = false,
-  pieces = false
+  unit = 'Chunk'
 }: BlockGridProps): React.JSX.Element {
-  const unit = pieces ? 'Piece' : 'Chunk'
   const [gridWidth, setGridWidth] = useState(0)
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null)
   const observerRef = useRef<ResizeObserver | null>(null)

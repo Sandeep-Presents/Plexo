@@ -19,8 +19,10 @@ import { applyDownloadUpdate } from '../src/shared/downloadUpdate'
 import type {
   DownloadState,
   DownloadStatus,
+  DownloadUnitState,
   DownloadUpdate,
   HttpDownloadState,
+  SteamDownloadState,
   TorrentDownloadState
 } from '../src/shared/types'
 import { Origin, sha256, type OriginOptions } from './origin'
@@ -304,7 +306,9 @@ export class PlexoApp {
       if (last?.status === 'completed') return last
       return entry.kind === 'http'
         ? { ...entry, blocks: [], streams: [] }
-        : { ...entry, pieces: [], peers: [] }
+        : entry.kind === 'steam'
+          ? { ...entry, cells: [], streams: [] }
+          : { ...entry, pieces: [], peers: [] }
     })
     // One that finished between the two calls is in both: history has its final state.
     const done = new Set(finished.map((state) => state.id))
@@ -372,7 +376,7 @@ export class PlexoApp {
       (network) => `${network.id}:${network.status}${network.error ? ` (${network.error})` : ''}`
     )
     const connections = state
-      ? (state.kind === 'http' ? state.streams : state.peers).map(
+      ? (state.kind === 'torrent' ? state.peers : state.streams).map(
           (connection) => `${connection.interfaceId}:${connection.status}`
         )
       : undefined
@@ -413,7 +417,8 @@ export function checkEvents(sessions: DownloadState[][]): void {
           `${label}: bytesDownloaded ≤ totalBytes`
         )
       }
-      const units = state.kind === 'http' ? state.blocks : state.pieces
+      const units: DownloadUnitState[] =
+        state.kind === 'http' ? state.blocks : state.kind === 'steam' ? state.cells : state.pieces
       assert.equal(
         units.every((unit, index) => unit.index === index),
         true,
@@ -421,7 +426,11 @@ export function checkEvents(sessions: DownloadState[][]): void {
       )
       assert.equal(
         units.length,
-        state.kind === 'http' ? state.totalBlocks : state.totalPieces,
+        state.kind === 'http'
+          ? state.totalBlocks
+          : state.kind === 'steam'
+            ? state.totalCells
+            : state.totalPieces,
         `${label}: as many work units as planned`
       )
       for (const unit of units) {
@@ -471,6 +480,8 @@ export function checkEvents(sessions: DownloadState[][]): void {
           state.bytesUploaded,
           `${label}: the networks' uploads add up to the download's`
         )
+      } else if (state.kind === 'steam') {
+        checkSteamEvent(state, label)
       } else if (state.status === 'downloading') {
         // A stream holds a block exactly while it is fetching it. A block has at most one stream
         // fetching it for real and two racing it as hedges, and is in flight whenever the first
@@ -514,6 +525,50 @@ export function checkEvents(sessions: DownloadState[][]): void {
       }
       lastStatus.set(state.id, state.status)
     }
+  }
+}
+
+/** A Steam download's own rules: its streams are on its networks and hold a grid cell exactly
+ * while fetching, and its byte counts agree everywhere they are shown. */
+function checkSteamEvent(state: SteamDownloadState, label: string): void {
+  const networks = new Set(state.networks.map((network) => network.id))
+  assert.equal(
+    new Set(state.streams.map((stream) => stream.id)).size,
+    state.streams.length,
+    `${label}: stream IDs are unique across networks`
+  )
+  for (const stream of state.streams) {
+    assert.ok(networks.has(stream.interfaceId), `${label}: stream ${stream.id} is on a network`)
+    assert.equal(
+      stream.currentCellIndex !== undefined,
+      stream.status === 'downloading',
+      `${label}: stream ${stream.id} (${stream.status}) holds a cell`
+    )
+    if (stream.currentCellIndex !== undefined && !stream.hedge) {
+      assert.equal(
+        state.cells[stream.currentCellIndex]?.status,
+        'downloading',
+        `${label}: held cell ${stream.currentCellIndex} is in flight`
+      )
+    }
+  }
+  const inCells = state.cells.reduce((sum, cell) => sum + cell.bytesDownloaded, 0)
+  const byNetworks = state.networks.reduce((sum, network) => sum + network.bytesDownloaded, 0)
+  assert.equal(inCells, state.bytesDownloaded, `${label}: the cells add up to the download`)
+  assert.equal(byNetworks, state.bytesDownloaded, `${label}: the networks add up to the download`)
+  assert.ok(state.chunksDone <= state.totalChunks, `${label}: chunksDone ≤ totalChunks`)
+  if (state.status === 'completed') {
+    assert.ok(
+      state.cells.every((cell) => cell.status === 'completed'),
+      `${label}: a completed download has every cell done`
+    )
+    assert.equal(state.chunksDone, state.totalChunks, `${label}: every chunk is done`)
+  }
+  if (state.phase === 'preparing') {
+    assert.ok(
+      state.streams.every((stream) => stream.status !== 'downloading'),
+      `${label}: nothing is fetched while preparing`
+    )
   }
 }
 
