@@ -220,6 +220,10 @@ test.describe('chunks', () => {
       expect(() => decodeChunk(body.subarray(0, body.length - 16), KEY, expected)).toThrow(
         ChunkError
       )
+      // A damaged copy is refused, or decodes to exactly the chunk: damage that lands only in
+      // bytes the format doesn't read (a zip's directory dates, say) changes nothing, and what
+      // comes out is checked against the chunk's SHA-1 either way. Never anything else.
+      let refused = 0
       fc.assert(
         fc.property(
           fc.integer({ min: 0, max: body.length - 1 }),
@@ -227,11 +231,20 @@ test.describe('chunks', () => {
           (at, flip) => {
             const damaged = Buffer.from(body)
             damaged[at] ^= flip
-            expect(() => decodeChunk(damaged, KEY, expected)).toThrow(ChunkError)
+            let decoded: Buffer
+            try {
+              decoded = decodeChunk(damaged, KEY, expected)
+            } catch (error) {
+              expect(error).toBeInstanceOf(ChunkError)
+              refused++
+              return
+            }
+            expect(decoded.equals(plain)).toBe(true)
           }
         ),
         { numRuns: 60 }
       )
+      expect(refused, 'almost any damage is refused').toBeGreaterThan(30)
     })
   }
 
