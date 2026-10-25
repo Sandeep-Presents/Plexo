@@ -4,7 +4,7 @@
   "description": "Speed up downloads by combining multiple network connections in parallel",
   "main": "./out/main/index.js",
   "author": "Anmol Kapil",
-  "homepage": "https://github.com/anmolkapil/plexo",
+  "homepage": "https://github.com/MerikhSS/plexo_steam-",
   "scripts": {
     "format": "prettier --write .",
     "format:check": "prettier --check .",

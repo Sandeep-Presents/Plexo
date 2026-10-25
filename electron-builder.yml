@@ -103,5 +103,6 @@ npmRebuild: false
 # workflow uploads them, with the latest*.yml files the updater reads.
 publish:
   provider: github
-  owner: anmolkapil
-  repo: plexo
+  # This fork's own releases: Plexo's would update a build of it to one without Steam downloads.
+  owner: MerikhSS
+  repo: plexo_steam-
