@@ -63,6 +63,7 @@ const plexoApi = {
   steamAppDetails: (appId: number) => invoke('steamAppDetails', appId),
   steamPrepare: (request: SteamPrepareRequest) => invoke('steamPrepare', request),
   steamLibraryFolders: (installDir?: string) => invoke('steamLibraryFolders', installDir),
+  steamClientApps: () => invoke('steamClientApps'),
 
   onSteamLoginState: (callback: (state: SteamLoginState) => void): (() => void) => {
     const listener = (_event: IpcRendererEvent, state: SteamLoginState): void => callback(state)

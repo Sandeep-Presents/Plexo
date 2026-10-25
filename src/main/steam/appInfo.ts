@@ -157,6 +157,44 @@ export function readAppInfo(appId: number, appinfo: unknown): SteamAppDetails {
   }
 }
 
+/** Where an app's pictures are on Steam's store CDN, relative to the app's own folder there. A
+ * newer app's carry a hash ("<hash>/library_600x900.jpg"); an older one's are plain names. */
+export interface SteamArtPaths {
+  /** The portrait capsule a Steam library shows, 600 × 900. */
+  capsule?: string
+  /** The store's landscape header, 460 × 215, which every app has. */
+  header?: string
+  /** The wide banner over an app's library page. */
+  hero?: string
+}
+
+/** A picture's path as appinfo gives one: a file name, after the hash of a newer one. Anything
+ * else (a "..", a full URL) is left out: it is put into a URL on Steam's CDN. */
+const ART_PATH = /^(?:[0-9a-f]{8,64}\/)?[\w-]{1,80}\.(?:jpg|jpeg|png|webp)$/i
+
+/** One of an asset's languages: English, or failing that the first there is. */
+function artPath(value: unknown): string | undefined {
+  const byLanguage = asNode(value)
+  const path = asString(byLanguage?.english) ?? Object.values(byLanguage ?? {}).map(asString)[0]
+  return path && ART_PATH.test(path) ? path : undefined
+}
+
+/** Where an app's pictures are, as far as its appinfo says. */
+export function readArtPaths(appinfo: unknown): SteamArtPaths {
+  const common = asNode(asNode(appinfo)?.common) ?? {}
+  const full = asNode(common.library_assets_full)
+  const image = (name: string): unknown => asNode(asNode(full?.[name])?.image)
+  const paths: SteamArtPaths = {
+    capsule: artPath(image('library_capsule')),
+    header: artPath(common.header_image),
+    hero: artPath(image('library_hero'))
+  }
+  for (const key of Object.keys(paths) as (keyof SteamArtPaths)[]) {
+    if (paths[key] === undefined) delete paths[key]
+  }
+  return paths
+}
+
 // The choice of depots is worked out in the window too, so it lives in shared/.
 export { defaultDepots, defaultLanguage, depotUnavailable, manifestFor }
 

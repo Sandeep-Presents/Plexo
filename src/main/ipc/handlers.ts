@@ -22,7 +22,7 @@ import { DownloadManager } from '../download/downloadManager'
 import { MAX_STREAMS_PER_NETWORK } from '../download/plan'
 import { canRemember } from '../steam/account'
 import { redactedMessage } from '../steam/redact'
-import { findLibraryFolders } from '../steam/steamFolders'
+import { clientInstalledApps, findLibraryFolders } from '../steam/steamFolders'
 import { getDefaultDownloadsDir, getHomeDir } from '../download/paths'
 import { listHistory } from '../download/history'
 import { deviceBindingSupported } from '../network/deviceBinding'
@@ -301,6 +301,7 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
   handle('steamLoginState', async () => {
     // The first time the window asks, a remembered login is used; the state changes are sent.
     void account.start()
+    await account.lookedForStoredLogin()
     const state = account.loginState
     return state.status === 'logged-out' ? { ...state, canRemember: canRemember() } : state
   })
@@ -329,6 +330,7 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
     }
     return findLibraryFolders(installDir)
   })
+  handle('steamClientApps', async () => clientInstalledApps())
 
   return manager
 }

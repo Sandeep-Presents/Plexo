@@ -75,4 +75,6 @@ export interface IpcContract {
   /** The Steam client's libraries on this computer, with whether `installDir` is in each. Reads
    * local files only. */
   steamLibraryFolders: { args: [installDir?: string]; result: SteamLibraryFolder[] }
+  /** The apps the Steam client has installed on this computer. Reads local files only. */
+  steamClientApps: { args: []; result: number[] }
 }

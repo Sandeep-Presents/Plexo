@@ -1,6 +1,6 @@
 import type { SteamAppDetails, SteamOwnedApp } from '../../shared/steam'
 import type { SteamAccount } from './account'
-import { readAppInfo } from './appInfo'
+import { readAppInfo, readArtPaths, type SteamArtPaths } from './appInfo'
 import type { SteamSession } from './backend'
 
 // What the logged-in account owns, and what an app is made of. Ownership comes from the account's
@@ -43,6 +43,8 @@ function chunked<T>(items: T[], size: number): T[][] {
 export class SteamLibrary {
   private ownership: Promise<Ownership> | null = null
   private apps: Promise<SteamOwnedApp[]> | null = null
+  /** Where each listed app's pictures are, from the appinfo the listing fetched. */
+  private readonly art = new Map<number, SteamArtPaths>()
 
   constructor(private readonly account: SteamAccount) {
     // A different login owns different things.
@@ -108,6 +110,7 @@ export class SteamLibrary {
           const name = typeof common?.name === 'string' ? common.name.slice(0, 200) : ''
           if (!name || !LISTED_TYPES.has(type) || !asRecord(appinfo?.depots)) continue
           listed.push({ appId, name, type, borrowed: apps.get(appId) ?? false })
+          this.art.set(appId, readArtPaths(appinfo))
         }
       }
       return listed.sort((a, b) => a.name.localeCompare(b.name))
@@ -116,6 +119,11 @@ export class SteamLibrary {
       throw error
     })
     return this.apps
+  }
+
+  /** Where an app's pictures are, once the listing has seen it; undefined before. */
+  artPaths(appId: number): SteamArtPaths | undefined {
+    return this.art.get(appId)
   }
 
   /** An owned app's details, its depots marked owned (and borrowed) by the account's licenses. */

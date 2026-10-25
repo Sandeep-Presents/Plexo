@@ -1,5 +1,5 @@
 import type { DownloadState, FinishedDownload } from '@shared/types'
-import { ChevronRight, Gamepad2, X } from 'lucide-react'
+import { ChevronRight, X } from 'lucide-react'
 import { cn } from 'cn'
 import { Fragment, memo, useCallback, useEffect, useState } from 'react'
 import { DownloadContextMenu } from '../components/DownloadContextMenu'
@@ -7,12 +7,10 @@ import { useDownloadActions, useDownloadActionsState } from '../components/downl
 import { ACTION_META, toolbarLabel } from '../components/downloadActionMeta'
 import { MoreActionsMenu } from '../components/MoreActionsMenu'
 import { DownloadFilterMenu } from '../components/DownloadFilterMenu'
+import { GameCapsule } from '../components/GameArt'
 import { CombineDiagram } from '../components/CombineDiagram'
-import { LimitsDialog } from '../components/LimitsDialog'
-import { ScheduleIndicator } from '../components/ScheduleIndicator'
 import { networkStatusText } from '../components/NetworkRow'
 import { scheduleMessage, scheduleWindow } from '@shared/downloadSchedule'
-import { NetworksMenu } from '../components/NetworksMenu'
 import { SteamBadge } from '../components/SteamBadge'
 import { Button } from '../components/ui/button'
 import { Checkbox } from '../components/ui/checkbox'
@@ -79,15 +77,11 @@ export function DownloadsScreen(): React.JSX.Element {
   const downloadsById = useAppStore((store) => store.downloads)
   const history = useAppStore((store) => store.history)
   const setView = useAppStore((store) => store.setView)
-  const openSteam = useAppStore((store) => store.openSteam)
   const filter = useAppStore((store) => store.downloadFilter)
   const setFilter = useAppStore((store) => store.setDownloadFilter)
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const { perform, askClearFinished } = useDownloadActions()
   const { busy } = useDownloadActionsState()
-  const [limitsOpen, setLimitsOpen] = useState(false)
-  const [showSchedule, setShowSchedule] = useState(false)
-  const [limitsPage, setLimitsPage] = useState<string | null>(null)
   const [now, setNow] = useState(() => Date.now())
 
   useEffect(() => {
@@ -165,12 +159,6 @@ export function DownloadsScreen(): React.JSX.Element {
   // the rest of what the menu does for the selection behind More, so six never need more room.
   const { buttons: toolbarButtons, more: moreActions } = splitToolbar(availableActions(chosen))
 
-  const openSchedule = (): void => {
-    setLimitsPage(null)
-    setShowSchedule(true)
-    setLimitsOpen(true)
-  }
-
   return (
     <div className="flex h-full flex-col bg-background">
       {chosen.length === 0 ? (
@@ -190,17 +178,6 @@ export function DownloadsScreen(): React.JSX.Element {
             </div>
           )}
           <div className="flex-1" />
-          <ScheduleIndicator onClick={openSchedule} />
-          <NetworksMenu
-            onOpenLimits={(page) => {
-              setShowSchedule(false)
-              setLimitsPage(page)
-              setLimitsOpen(true)
-            }}
-          />
-          <Button type="button" onClick={() => openSteam()}>
-            Steam
-          </Button>
         </div>
       ) : (
         <div
@@ -254,7 +231,6 @@ export function DownloadsScreen(): React.JSX.Element {
             ))}
             <MoreActionsMenu groups={moreActions} disabled={busy} />
           </div>
-          <ScheduleIndicator onClick={openSchedule} />
         </div>
       )}
 
@@ -328,14 +304,6 @@ export function DownloadsScreen(): React.JSX.Element {
           )
         })}
       </div>
-
-      <LimitsDialog
-        open={limitsOpen}
-        showSchedule={showSchedule}
-        onOpenChange={setLimitsOpen}
-        page={limitsPage}
-        onPageChange={setLimitsPage}
-      />
     </div>
   )
 }
@@ -354,7 +322,7 @@ function EmptyState(): React.JSX.Element {
     (store) => store.interfacesStatus === 'ready' && store.interfaces.length === 0
   )
   const loadInterfaces = useAppStore((store) => store.loadInterfaces)
-  const openSteam = useAppStore((store) => store.openSteam)
+  const setView = useAppStore((store) => store.setView)
 
   return (
     <div className="flex flex-col items-center gap-4 px-5 pt-16 pb-10 text-center">
@@ -383,10 +351,10 @@ function EmptyState(): React.JSX.Element {
         <>
           <div className="font-sans text-[16px] leading-[1.2] font-bold">No downloads yet</div>
           <div className="max-w-[380px] text-[12.5px] leading-[1.6] text-[var(--text-secondary)]">
-            Pick a game from your Steam library to install it over every network at once.
+            Pick a game from your library to install it over every network at once.
           </div>
-          <Button type="button" className="mt-1" onClick={() => openSteam()}>
-            Open Steam library
+          <Button type="button" className="mt-1" onClick={() => setView({ name: 'library' })}>
+            Go to library
           </Button>
         </>
       )}
@@ -547,8 +515,8 @@ const DownloadRow = memo(function DownloadRow({
         onClick={() => onOpen(item.id)}
         className="flex min-w-0 flex-1 items-center gap-3 rounded-md text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
-        <div className="flex size-10 shrink-0 items-center justify-center rounded-lg border-[0.5px] border-border bg-card font-mono text-[10px] font-semibold text-muted-foreground">
-          <Gamepad2 aria-hidden className="size-[18px]" />
+        <div className="h-12 w-8 shrink-0 overflow-hidden rounded-md ring-1 ring-foreground/10">
+          <GameCapsule appId={item.app.appId} name={item.fileName} small />
         </div>
         <div className="flex min-w-0 flex-1 flex-col gap-1.5">
           <div className="flex min-w-0 items-center gap-2">

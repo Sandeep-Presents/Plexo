@@ -16,7 +16,7 @@ export function DownloadActionsProvider({
   children: React.ReactNode
 }): React.JSX.Element {
   const setView = useAppStore((store) => store.setView)
-  const openSteam = useAppStore((store) => store.openSteam)
+  const openGame = useAppStore((store) => store.openGame)
   const [confirmation, setConfirmation] = useState<{
     mode: RemoveMode
     items: DownloadItem[]
@@ -57,8 +57,7 @@ export function DownloadActionsProvider({
             return fail(cause)
           }
           useAppStore.getState().forgetDownload(item.id)
-          setView({ name: 'list' })
-          openSteam(item.app.appId)
+          openGame(item.app.appId)
           return true
         }
         case 'open':
@@ -86,7 +85,7 @@ export function DownloadActionsProvider({
           return true
       }
     },
-    [setView, openSteam]
+    [openGame]
   )
 
   const askClearFinished = useCallback((): void => {
@@ -119,7 +118,9 @@ export function DownloadActionsProvider({
       }
       // Showing one that's gone: back to the list.
       const view = useAppStore.getState().view
-      if (view.name === 'download' && (clearAll || gone.has(view.id))) setView({ name: 'list' })
+      if (view.name === 'download' && (clearAll || gone.has(view.id))) {
+        setView({ name: 'downloads' })
+      }
       const left = items.filter((item) => !gone.has(item.id))
       if (!clearAll && left.length > 0) {
         setConfirmation({ mode, items: left, clearAll })

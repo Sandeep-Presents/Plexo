@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { lstat, readFile, realpath, statfs } from 'node:fs/promises'
+import { lstat, readdir, readFile, realpath, statfs } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join, win32 } from 'node:path'
 import { promisify } from 'node:util'
@@ -71,12 +71,8 @@ async function freeSpace(dir: string): Promise<number | null> {
   }
 }
 
-/**
- * The Steam libraries on this computer, as folders a game can be saved to: each one's
- * steamapps/common. With `installDir`, whether the game is already in each, and those that have
- * it first. Empty when Steam isn't installed.
- */
-export async function findLibraryFolders(installDir?: string): Promise<SteamLibraryFolder[]> {
+/** Every Steam library on this computer, each once, as the folder that holds its steamapps. */
+async function libraryRoots(): Promise<string[]> {
   const libraries: string[] = []
   for (const root of await rootCandidates()) {
     if (!(await isDirectory(join(root, 'steamapps')))) continue
@@ -87,18 +83,30 @@ export async function findLibraryFolders(installDir?: string): Promise<SteamLibr
     )
     libraries.push(...listed)
   }
-
-  const folder = installDir === undefined ? undefined : sanitizeFileName(installDir)
   const seen = new Set<string>()
-  const found: SteamLibraryFolder[] = []
+  const roots: string[] = []
   for (const library of libraries) {
-    const steamapps = join(library, 'steamapps')
-    if (!(await isDirectory(steamapps))) continue
+    if (!(await isDirectory(join(library, 'steamapps')))) continue
     // The same library reached two ways (~/.steam/steam is a link, Windows ignores case).
     const real = await realpath(library).catch(() => library)
     const identity = process.platform === 'win32' ? real.toLowerCase() : real
     if (seen.has(identity)) continue
     seen.add(identity)
+    roots.push(real)
+  }
+  return roots
+}
+
+/**
+ * The Steam libraries on this computer, as folders a game can be saved to: each one's
+ * steamapps/common. With `installDir`, whether the game is already in each, and those that have
+ * it first. Empty when Steam isn't installed.
+ */
+export async function findLibraryFolders(installDir?: string): Promise<SteamLibraryFolder[]> {
+  const folder = installDir === undefined ? undefined : sanitizeFileName(installDir)
+  const found: SteamLibraryFolder[] = []
+  for (const real of await libraryRoots()) {
+    const steamapps = join(real, 'steamapps')
     const common = join(real, 'steamapps', 'common')
     const hasCommon = await isDirectory(common)
     found.push({
@@ -109,4 +117,18 @@ export async function findLibraryFolders(installDir?: string): Promise<SteamLibr
   }
   // Stable: libraries that have the game first, the rest in Steam's own order.
   return found.sort((a, b) => Number(b.hasGame) - Number(a.hasGame))
+}
+
+/** The apps the Steam client has installed (or is installing) on this computer: each has an
+ * appmanifest_<id>.acf in its library's steamapps. */
+export async function clientInstalledApps(): Promise<number[]> {
+  const apps = new Set<number>()
+  for (const root of await libraryRoots()) {
+    const names = await readdir(join(root, 'steamapps')).catch(() => [])
+    for (const name of names) {
+      const match = /^appmanifest_(\d{1,10})\.acf$/i.exec(name)
+      if (match) apps.add(Number(match[1]))
+    }
+  }
+  return [...apps]
 }

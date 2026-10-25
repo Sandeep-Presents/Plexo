@@ -5,6 +5,7 @@ import { BlockGrid } from '../components/BlockGrid'
 import { ColorBadge } from '../components/ColorBadge'
 import { CombineDiagram } from '../components/CombineDiagram'
 import { CyclableChip } from '../components/CyclableChip'
+import { GameCapsule } from '../components/GameArt'
 import { HeroBand } from '../components/HeroBand'
 import { NetworkRow } from '../components/NetworkRow'
 import { DetailHeader } from '../components/DetailHeader'
@@ -306,8 +307,8 @@ export const DownloadingScreen = memo(function DownloadingScreen({
       {/* File info — always visible, never shrinks */}
       <div className="shrink-0 p-[16px_20px_0px]">
         <div className="flex items-center gap-[14px]">
-          <div className="flex size-11 shrink-0 items-center justify-center rounded-[10px] border-[0.5px] border-[var(--border-strong)] bg-card font-mono text-[10.5px] leading-none font-bold tracking-[0.04em] text-[var(--text-secondary)]">
-            <Folder aria-label="Folder" className="size-[18px]" />
+          <div className="h-[60px] w-10 shrink-0 overflow-hidden rounded-md ring-1 ring-foreground/10">
+            <GameCapsule appId={download.app.appId} name={download.fileName} small />
           </div>
           <div className="flex min-w-0 flex-1 flex-col gap-1.5">
             <div className="flex min-w-0 items-center gap-2">
@@ -348,9 +349,9 @@ export const DownloadingScreen = memo(function DownloadingScreen({
                   border={statusBadge.palette.border}
                   text={statusBadge.palette.text}
                   // Pinned for the same reason as the stream row's ACTIVE badge: sizing itself,
-                  // it pushed this text block past the 44px file-type icon beside it and nudged
-                  // everything below down. At h-4 the block stays under the icon, so the row
-                  // height is the icon's either way.
+                  // it pushed this text block past the game picture beside it and nudged
+                  // everything below down. At h-4 the block stays within the picture, so the row
+                  // height is the picture’s either way.
                   className="h-4 rounded-[3.5px] px-[7px] py-0.5 text-[9.5px] font-semibold tracking-[0.08em]"
                 >
                   {statusBadge.label}

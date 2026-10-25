@@ -1,14 +1,10 @@
-import { STEAM_LOGIN_REQUIRED } from '@shared/steam'
 import type { DownloadState } from '@shared/types'
 import { Folder } from 'lucide-react'
 import { DetailHeader } from '../components/DetailHeader'
 import { TruncatedText } from '../components/TruncatedText'
-import { Button } from '../components/ui/button'
-import { useAppStore } from '../store/useAppStore'
 import { describeError, formatBytes, formatPercent } from '../utils/format'
 
 export function ErrorScreen({ download }: { download: DownloadState }): React.JSX.Element {
-  const openSteam = useAppStore((store) => store.openSteam)
   const cancelled = download.status === 'cancelled'
   const knownSize = download.totalBytes > 0
   const percent = knownSize ? formatPercent(download.bytesDownloaded, download.totalBytes) : 0
@@ -85,12 +81,6 @@ export function ErrorScreen({ download }: { download: DownloadState }): React.JS
               {description}
             </div>
           </div>
-          {/* Retrying needs the login first; it is had in the Steam dialog. */}
-          {download.error === STEAM_LOGIN_REQUIRED && (
-            <Button type="button" variant="secondary" onClick={() => openSteam()}>
-              Log in to Steam
-            </Button>
-          )}
 
           {/* File capsule */}
           <div className="flex w-full items-center gap-[11px] rounded-[9px] border-[0.5px] border-border bg-background p-[10px_12px] text-left">

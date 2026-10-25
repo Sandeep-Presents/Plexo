@@ -1,3 +1,4 @@
+import { cn } from 'cn'
 import { ChevronDown, ChevronRight } from 'lucide-react'
 import { useState } from 'react'
 import { useNetworkUsage } from '../hooks/useNetworks'
@@ -12,12 +13,14 @@ import { TruncatedText } from './TruncatedText'
 
 /** Every network the computer has, one row each: on the left what it is (its name, the system's
  * name for it, the limits set on it), on the right what it's doing (its speed). Which
- * networks a download uses is picked in New download, which remembers the last pick. */
+ * networks a download uses is picked on the game's page, which remembers the last pick. */
 export function NetworksMenu({
-  onOpenLimits
+  onOpenLimits,
+  className
 }: {
   /** Opens Speed & data limits on that network's page, or General for null. */
   onOpenLimits: (page: string | null) => void
+  className?: string
 }): React.JSX.Element {
   const formatSpeed = useFormatSpeed()
   const formatSpeedLimit = useFormatSpeedLimit()
@@ -41,7 +44,13 @@ export function NetworksMenu({
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger
-        render={<Button type="button" variant="secondary" className="gap-2.5 px-3 text-[13px]" />}
+        render={
+          <Button
+            type="button"
+            variant="secondary"
+            className={cn('gap-2.5 px-3 text-[13px]', className)}
+          />
+        }
       >
         <span className="flex gap-1" aria-hidden>
           {interfaces.slice(0, 4).map((iface) => (
@@ -56,17 +65,19 @@ export function NetworksMenu({
           <span className="text-[var(--color-danger)]">No network</span>
         ) : (
           <>
-            {interfaces.length} {interfaces.length === 1 ? 'network' : 'networks'}
+            <span className="shrink-0">
+              {interfaces.length} {interfaces.length === 1 ? 'network' : 'networks'}
+            </span>
             {total > 0 && (
-              <span className="font-mono text-[11.5px] text-muted-foreground">
+              <span className="min-w-0 truncate font-mono text-[11.5px] text-muted-foreground">
                 {formatSpeed(total)}
               </span>
             )}
           </>
         )}
-        <ChevronDown className="size-3.5 text-muted-foreground" />
+        <ChevronDown className="ml-auto size-3.5 shrink-0 text-muted-foreground" />
       </PopoverTrigger>
-      <PopoverContent align="end" className="w-[340px] gap-0 p-0">
+      <PopoverContent side="top" align="start" className="w-[340px] gap-0 p-0">
         <div className="border-b-[0.5px] border-border px-4 py-3 text-[14px] font-semibold">
           Networks
         </div>

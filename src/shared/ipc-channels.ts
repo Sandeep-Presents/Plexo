@@ -34,6 +34,7 @@ export const IpcChannels = {
   steamAppDetails: 'steam:app-details',
   steamPrepare: 'steam:prepare',
   steamLibraryFolders: 'steam:library-folders',
+  steamClientApps: 'steam:client-apps',
   steamLoginStateChanged: 'steam:login-state-changed',
   steamPrepareProgress: 'steam:prepare-progress'
 } as const

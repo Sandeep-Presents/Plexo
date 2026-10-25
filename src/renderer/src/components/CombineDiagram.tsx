@@ -34,11 +34,14 @@ export interface CombineDiagramNetwork {
 export function CombineDiagram({
   networks,
   muted = false,
-  paused = false
+  paused = false,
+  speeds = true
 }: {
   networks: CombineDiagramNetwork[]
   muted?: boolean
   paused?: boolean
+  /** Each network's speed beside its name; off where the diagram only illustrates the idea. */
+  speeds?: boolean
 }): React.JSX.Element {
   const formatSpeed = useFormatSpeed()
   const height = Math.max(78, networks.length * ROW_HEIGHT + 10)
@@ -144,7 +147,7 @@ export function CombineDiagram({
               <title>{network.label}</title>
               {label}
             </text>
-            {!muted && (
+            {!muted && speeds && (
               <text
                 x={LABEL_X}
                 y={y + 7.5}

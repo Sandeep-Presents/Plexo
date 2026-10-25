@@ -3,6 +3,7 @@ import { app, BrowserWindow, Menu, nativeTheme, shell } from 'electron'
 import { join } from 'path'
 import icon from '../../resources/icon-dark.png?asset'
 import { registerIpcHandlers } from './ipc/handlers'
+import { handleArt, registerArtScheme } from './steam/art'
 import { loadSettings, loadThemeSource } from './settings'
 import { startUpdater } from './updater'
 import { testKnobs } from './testKnobs'
@@ -15,6 +16,9 @@ app.setName('Plexo')
 
 // Each e2e test runs against its own throwaway userData folder (downloads, manifests, settings).
 if (testKnobs.userDataDir) app.setPath('userData', testKnobs.userDataDir)
+
+// Game pictures, which the window loads as game-art:// (see steam/art.ts).
+registerArtScheme()
 
 // One Plexo at a time (per userData folder, so parallel e2e runs each have their own): a second
 // launch brings the first one's window forward and exits.
@@ -130,6 +134,7 @@ app.whenReady().then(async () => {
   })
 
   downloadManager = registerIpcHandlers(() => mainWindow)
+  handleArt(downloadManager.steam.library)
 
   nativeTheme.on('updated', () => {
     mainWindow?.setBackgroundColor(nativeTheme.shouldUseDarkColors ? '#1c1c1e' : '#ffffff')

@@ -1,5 +1,6 @@
 import { applyDownloadUpdate } from '@shared/downloadUpdate'
-import type { SteamLoginState } from '@shared/steam'
+import { describeError } from '@shared/errors'
+import type { SteamLoginState, SteamOwnedApp } from '@shared/steam'
 import type {
   AppSettings,
   DownloadSchedule,
@@ -18,8 +19,21 @@ export type DownloadFilter = 'all' | 'progress' | 'finished' | 'failed'
 
 type LoadStatus = 'idle' | 'loading' | 'ready' | 'error'
 
-/** What the window shows: the list of downloads, or one download. */
-export type View = { name: 'list' } | { name: 'download'; id: string }
+/** What the window shows: a launcher's library (Steam's, so far), one game, the list of
+ * downloads, or one download. */
+export type View =
+  | { name: 'library' }
+  | { name: 'game'; appId: number }
+  | { name: 'downloads' }
+  | { name: 'download'; id: string }
+
+/** The games the account owns, as Steam last listed them. */
+export type LibraryLoad =
+  | { status: 'idle' | 'loading' }
+  | { status: 'ready'; apps: SteamOwnedApp[] }
+  | { status: 'error'; message: string }
+
+export type LibraryFilter = 'all' | 'installed' | 'not-installed'
 
 interface AppStore {
   interfaces: NetworkInterfaceInfo[]
@@ -42,10 +56,14 @@ interface AppStore {
   downloadFilter: DownloadFilter
   setDownloadFilter: (filter: DownloadFilter) => void
   downloadSchedule: DownloadSchedule | undefined
-  /** The Steam dialog, over whatever the window shows; with an app, opened on that app. */
-  steam: { open: boolean; appId?: number }
-  /** The Steam login as main last said; null until the Steam dialog first asks. */
+  /** The Steam login as main last said; null until the window has asked. */
   steamLogin: SteamLoginState | null
+  library: LibraryLoad
+  /** What the library's search and filter are set to, kept while the window shows other things. */
+  libraryQuery: string
+  libraryFilter: LibraryFilter
+  /** The apps the Steam client itself has installed on this computer. */
+  clientApps: number[]
   /** Persisted — how many downloads run at once; the rest wait in the queue. */
   downloadsAtOnce: number
   /** Persisted — the speed limits (see AppSettings). */
@@ -70,9 +88,14 @@ interface AppStore {
   /** Drops a download from the window's view once the main process has removed it. */
   forgetDownload: (id: string) => void
   setView: (view: View) => void
-  openSteam: (appId?: number) => void
-  closeSteam: () => void
+  /** Opens a game's own page. */
+  openGame: (appId: number) => void
   receiveSteamLogin: (state: SteamLoginState) => void
+  /** Lists the library, once; `refresh` asks Steam again. */
+  loadLibrary: (refresh?: boolean) => Promise<void>
+  setLibraryQuery: (query: string) => void
+  setLibraryFilter: (filter: LibraryFilter) => void
+  loadClientApps: () => Promise<void>
   setDownloadsAtOnce: (count: number) => void
   /** Each one applies at once, to every download (see main/network/limits.ts). */
   setSpeedLimit: (bytesPerSec: number | undefined) => void
@@ -104,12 +127,15 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
   downloads: {},
   history: [],
-  view: { name: 'list' },
+  view: { name: 'library' },
   downloadFilter: 'all',
   setDownloadFilter: (downloadFilter) => set({ downloadFilter }),
   downloadSchedule: initial.downloadSchedule,
-  steam: { open: false },
   steamLogin: null,
+  library: { status: 'idle' },
+  libraryQuery: '',
+  libraryFilter: 'all',
+  clientApps: [],
   downloadsAtOnce: initial.downloadsAtOnce,
   speedLimit: initial.speedLimit,
   slowMode: initial.slowMode,
@@ -174,9 +200,36 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
   setView: (view) => set({ view }),
 
-  openSteam: (appId) => set({ steam: { open: true, appId } }),
-  closeSteam: () => set({ steam: { open: false } }),
-  receiveSteamLogin: (steamLogin) => set({ steamLogin }),
+  openGame: (appId) => set({ view: { name: 'game', appId } }),
+
+  receiveSteamLogin: (steamLogin) => {
+    const was = get().steamLogin
+    set({ steamLogin })
+    // Another account owns other things: back to a library to be listed afresh.
+    if (was?.status === 'logged-in' && steamLogin.status !== 'logged-in') {
+      set({ library: { status: 'idle' }, view: { name: 'library' } })
+    }
+  },
+
+  loadLibrary: async (refresh = false) => {
+    const { library } = get()
+    if (!refresh && library.status !== 'idle' && library.status !== 'error') return
+    set({ library: { status: 'loading' } })
+    try {
+      const apps = await window.plexo.steamOwnedApps(refresh)
+      set({ library: { status: 'ready', apps } })
+    } catch (error) {
+      set({ library: { status: 'error', message: describeError(error) } })
+    }
+  },
+
+  setLibraryQuery: (libraryQuery) => set({ libraryQuery }),
+  setLibraryFilter: (libraryFilter) => set({ libraryFilter }),
+
+  loadClientApps: async () => {
+    const clientApps = await window.plexo.steamClientApps().catch(() => [])
+    set({ clientApps })
+  },
 
   setDownloadsAtOnce: (downloadsAtOnce) => {
     set({ downloadsAtOnce })

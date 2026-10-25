@@ -107,7 +107,9 @@ test('a restart inside the window continues scheduled work', async ({ plexo, ser
   await expect.poll(async () => (await plexo.byId(id))?.status).toBe('completed')
 })
 
+/** Opens the schedule as the sidebar's networks menu does: the window shows it once logged in. */
 async function openSchedule(plexo: PlexoApp): Promise<void> {
+  if ((await plexo.api.steamLoginState()).status !== 'logged-in') await plexo.loginSteam()
   await plexo.page.getByRole('button', { name: /^\d+ networks?/ }).click()
   await plexo.page.getByRole('button', { name: 'Speed & data limits', exact: true }).click()
   await plexo.page.getByRole('region', { name: 'Download schedule' }).scrollIntoViewIfNeeded()
@@ -124,8 +126,11 @@ async function chooseTime(plexo: PlexoApp, label: string, time: string): Promise
 }
 
 test('schedule dialog saves, cancels edits, validates times, and restores settings', async ({
-  plexo
+  plexo,
+  serveSteam
 }, testInfo) => {
+  await serveSteam()
+  await plexo.loginSteam()
   const page = plexo.page
   const indicator = page.getByRole('button', { name: 'Download schedule enabled', exact: true })
   await expect(indicator).toBeHidden()
@@ -204,7 +209,11 @@ test('schedule dialog saves, cancels edits, validates times, and restores settin
   ).toBeHidden()
 })
 
-test('an overnight schedule remains usable at the minimum window size', async ({ plexo }) => {
+test('an overnight schedule remains usable at the minimum window size', async ({
+  plexo,
+  serveSteam
+}) => {
+  await serveSteam()
   await plexo.evaluateMain(({ BrowserWindow }) => {
     const window = BrowserWindow.getAllWindows()[0]
     window.setSize(720, 620)

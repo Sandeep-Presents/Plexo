@@ -83,6 +83,8 @@ export class SteamAccount {
   private generation = 0
   private remembered = false
   private started: Promise<void> | null = null
+  /** Settles once start() has looked for a stored login. */
+  private looked: Promise<void> = Promise.resolve()
   private readonly listeners = new Set<(state: SteamLoginState) => void>()
   /** Waiting for a login under way (or the stored one) to finish. */
   private readonly waiters = new Set<() => void>()
@@ -108,14 +110,24 @@ export class SteamAccount {
     this.set({ status: 'logged-out', canRemember: canRemember(), ...(error ? { error } : {}) })
   }
 
-  /** Logs in with the stored login, once, the first time Steam is needed: never at launch, so
-   * Plexo doesn't reach out to Steam unless it is used. */
+  /** Logs in with the stored login, once, the first time the window asks for the login (which it
+   * does as it opens: it shows nothing else until there is one). */
   start(): Promise<void> {
-    this.started ??= this.restore()
+    if (!this.started) {
+      let looked = (): void => {}
+      this.looked = new Promise((resolve) => (looked = resolve))
+      this.started = this.restore(looked).finally(looked)
+    }
     return this.started
   }
 
-  private async restore(): Promise<void> {
+  /** Once start() has looked for a stored login: the state then says whether one is being used,
+   * so the window doesn't show the login form to someone who stays logged in. */
+  lookedForStoredLogin(): Promise<void> {
+    return this.looked
+  }
+
+  private async restore(looked: () => void): Promise<void> {
     const stored = (await readJson(storePath()).catch(() => undefined)) as StoredLogin | undefined
     const token =
       stored?.version === 1 &&
@@ -129,6 +141,7 @@ export class SteamAccount {
     }
     const generation = ++this.generation
     this.set({ status: 'connecting' })
+    looked()
     try {
       const session = await (await this.backend()).logOn(token, stored.accountName)
       if (generation !== this.generation) {

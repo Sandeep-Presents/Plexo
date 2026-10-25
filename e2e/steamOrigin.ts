@@ -1,6 +1,7 @@
 import { randomBytes, randomUUID } from 'node:crypto'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import type { AddressInfo, Socket } from 'node:net'
+import { crc32, deflateSync } from 'node:zlib'
 import {
   buildManifest,
   seeded,
@@ -200,10 +201,55 @@ export interface SteamOriginOptions {
   bytesPerSecond?: number
   /** Content servers refuse (403) any request without a CDN token from /cm/token. */
   requireToken?: boolean
+  /** More of the account's library: listed, but with nothing in them to download. Borrowed ones
+   * come through Family Sharing. */
+  otherApps?: { appId: number; name: string; type?: string; borrowed?: boolean }[]
+}
+
+/** A PNG of `width` × `height`, shading from one color to another top to bottom: a stand-in for a
+ * game's picture on Steam's store CDN. */
+export function gradientPng(
+  width: number,
+  height: number,
+  from: [number, number, number],
+  to: [number, number, number]
+): Buffer {
+  const chunk = (type: string, data: Buffer): Buffer => {
+    const length = Buffer.alloc(4)
+    length.writeUInt32BE(data.length)
+    const body = Buffer.concat([Buffer.from(type, 'ascii'), data])
+    const crc = Buffer.alloc(4)
+    crc.writeUInt32BE(crc32(body))
+    return Buffer.concat([length, body, crc])
+  }
+  const header = Buffer.alloc(13)
+  header.writeUInt32BE(width, 0)
+  header.writeUInt32BE(height, 4)
+  header.set([8, 2, 0, 0, 0], 8)
+  const rows: Buffer[] = []
+  for (let y = 0; y < height; y++) {
+    const row = Buffer.alloc(1 + width * 3)
+    const t = y / Math.max(1, height - 1)
+    for (let x = 0; x < width; x++) {
+      for (let c = 0; c < 3; c++) row[1 + x * 3 + c] = Math.round(from[c] + (to[c] - from[c]) * t)
+    }
+    rows.push(row)
+  }
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk('IHDR', header),
+    chunk('IDAT', deflateSync(Buffer.concat(rows))),
+    chunk('IEND', Buffer.alloc(0))
+  ])
 }
 
 export class SteamOrigin {
   readonly log: LoggedSteamRequest[] = []
+  /** Every picture asked for, as /<appId>/<file>: what the app caches it fetches once. */
+  readonly artRequests: string[] = []
+  /** The pictures it has, by /<appId>/<file>; anything else is a 404, as on Steam's CDN. The
+   * game has a capsule and a header, but no banner. */
+  readonly art = new Map<string, Buffer>()
   /** The refresh tokens handed out: what must never reach the window, a log or a file. */
   readonly refreshTokens: string[] = []
   /** Every manifest request code and CDN token handed out, which must not either. */
@@ -230,6 +276,11 @@ export class SteamOrigin {
     readonly app: SteamAppFixture = syntheticApp(),
     readonly options: SteamOriginOptions = {}
   ) {
+    this.art.set(
+      `/${app.appId}/library_600x900.jpg`,
+      gradientPng(60, 90, [74, 108, 178], [20, 28, 52])
+    )
+    this.art.set(`/${app.appId}/header.jpg`, gradientPng(92, 43, [178, 96, 60], [60, 24, 20]))
     for (const depot of app.depots) {
       const manifest = buildManifest({
         depotId: depot.depotId,
@@ -394,6 +445,15 @@ export class SteamOrigin {
     const path = url.pathname
     const param = (name: string): string => url.searchParams.get(name) ?? ''
 
+    // Steam's store CDN, which needs no login.
+    if (path.startsWith('/art/')) {
+      const file = path.slice('/art'.length)
+      this.artRequests.push(file)
+      const image = this.art.get(file)
+      if (!image) return void res.writeHead(404).end()
+      return void res.writeHead(200, { 'content-type': 'image/png' }).end(image)
+    }
+
     if (path === '/cm/login') {
       if (body.accountName !== ACCOUNT.name || body.password !== ACCOUNT.password) {
         return refuse('Invalid password', 5)
@@ -463,30 +523,48 @@ export class SteamOrigin {
     }
     if (!this.loggedIn(req)) return refuse('Not logged on', 21)
     if (path === '/cm/alive') return send({ ok: true })
-    if (path === '/cm/licenses') return send([{ packageId: 5000, borrowed: false }])
+    const others = this.options.otherApps ?? []
+    if (path === '/cm/licenses') {
+      return send([
+        { packageId: 5000, borrowed: false },
+        ...(others.some((other) => other.borrowed) ? [{ packageId: 5001, borrowed: true }] : [])
+      ])
+    }
     if (path === '/cm/productinfo') {
       const apps = (body.apps as number[] | undefined) ?? []
       const packages = (body.packages as number[] | undefined) ?? []
+      const appinfo = (appId: number): unknown => {
+        if (appId === this.app.appId) return this.appinfo()
+        const other = others.find((entry) => entry.appId === appId)
+        return other && { common: { name: other.name, type: other.type ?? 'Game' }, depots: {} }
+      }
+      const appIds = (packageId: number): number[] =>
+        packageId === 5000
+          ? [this.app.appId, ...others.filter((o) => !o.borrowed).map((o) => o.appId)]
+          : others.filter((o) => o.borrowed).map((o) => o.appId)
       return send({
         apps: Object.fromEntries(
           apps
-            .filter((appId) => appId === this.app.appId)
-            .map((appId) => [String(appId), { appinfo: this.appinfo(), missingToken: false }])
+            .filter((appId) => appinfo(appId))
+            .map((appId) => [String(appId), { appinfo: appinfo(appId), missingToken: false }])
         ),
         packages: Object.fromEntries(
           packages
-            .filter((packageId) => packageId === 5000)
+            .filter((packageId) => packageId === 5000 || packageId === 5001)
             .map((packageId) => [
               String(packageId),
               {
                 packageinfo: {
                   packageid: packageId,
-                  appids: { 0: this.app.appId },
-                  depotids: Object.fromEntries(
-                    this.app.depots
-                      .filter((depot) => depot.owned)
-                      .map((depot, index) => [index, depot.depotId])
-                  )
+                  appids: Object.fromEntries(appIds(packageId).map((id, index) => [index, id])),
+                  depotids:
+                    packageId === 5000
+                      ? Object.fromEntries(
+                          this.app.depots
+                            .filter((depot) => depot.owned)
+                            .map((depot, index) => [index, depot.depotId])
+                        )
+                      : {}
                 },
                 missingToken: false
               }

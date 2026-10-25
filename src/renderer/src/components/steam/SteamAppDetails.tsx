@@ -16,7 +16,7 @@ import {
   steamSystem
 } from '@shared/steamSelection'
 import { cn } from 'cn'
-import { AlertTriangle, ChevronDown, ChevronLeft } from 'lucide-react'
+import { AlertTriangle, ChevronDown } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useNetworkUsage } from '../../hooks/useNetworks'
 import { useNetworkVisuals } from '../../hooks/useNetworkVisuals'
@@ -33,9 +33,9 @@ import {
 } from '../ui/dropdown-menu'
 import { ToggleGroup, ToggleGroupItem } from '../ui/toggle-group'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip'
-import { FamilySharing } from './SteamLibrary'
+import { FamilySharing } from './FamilySharing'
 
-// One owned app, and what of it to download: the branch, the system, architecture and language
+// One owned game, and what of it to download: the branch, the system, architecture and language
 // (which pick the depots Steam itself would install), the depots themselves, where it goes and
 // over which networks. Download works the download out in the main process (manifests fetched,
 // an existing folder checked) and then starts it.
@@ -47,11 +47,6 @@ const SYSTEMS: { value: SteamOs; label: string }[] = [
   { value: 'macos', label: 'macOS' },
   { value: 'linux', label: 'Linux' }
 ]
-
-type Load =
-  | { status: 'loading' }
-  | { status: 'ready'; details: Details }
-  | { status: 'error'; message: string }
 
 /** Looking for the Steam client's libraries, for a game to go where Steam keeps its own. */
 type Detect =
@@ -67,55 +62,8 @@ type Start =
   | { status: 'confirm'; plan: SteamPlan }
   | { status: 'starting' }
 
-export function SteamAppDetails({
-  appId,
-  onBack,
-  onStarted
-}: {
-  appId: number
-  onBack: () => void
-  onStarted: (downloadId: string, queued: boolean) => void
-}): React.JSX.Element {
-  const [load, setLoad] = useState<Load>({ status: 'loading' })
-
-  useEffect(() => {
-    let stale = false
-    window.plexo
-      .steamAppDetails(appId)
-      .then((details) => !stale && setLoad({ status: 'ready', details }))
-      .catch((error: unknown) => {
-        if (!stale) setLoad({ status: 'error', message: describeError(error) })
-      })
-    return () => {
-      stale = true
-    }
-  }, [appId])
-
-  return (
-    <div className="flex min-h-0 flex-col gap-3.5">
-      <div className="flex items-center gap-2">
-        <Button type="button" variant="ghost" size="sm" onClick={onBack}>
-          <ChevronLeft data-icon="inline-start" />
-          Library
-        </Button>
-        {load.status === 'ready' && (
-          <h2 className="min-w-0 flex-1 truncate text-[15px] font-semibold">{load.details.name}</h2>
-        )}
-      </div>
-      {load.status === 'loading' && (
-        <div className="py-6 text-center text-[12.5px] text-muted-foreground">
-          Asking Steam about this game…
-        </div>
-      )}
-      {load.status === 'error' && <Problem message={load.message} />}
-      {load.status === 'ready' && (
-        <Choices key={load.details.appId} details={load.details} onStarted={onStarted} />
-      )}
-    </div>
-  )
-}
-
-function Choices({
+/** What of a game to download, and where to: the choices, then Download. */
+export function InstallOptions({
   details,
   onStarted
 }: {
@@ -124,7 +72,6 @@ function Choices({
 }): React.JSX.Element {
   const interfaces = useAppStore((store) => store.interfaces)
   const homeDir = useAppStore((store) => store.homeDir)
-  // Its own, apart from New download's: a Steam library is no place for other downloads.
   const destinationDir = useAppStore((store) => store.destinationDir)
   const setDestinationDir = useAppStore((store) => store.setDestinationDir)
   const networkPreferences = useAppStore((store) => store.networkPreferences)
