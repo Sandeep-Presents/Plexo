@@ -77,3 +77,73 @@ export interface SteamSelection {
   language: string
   lowViolence?: boolean
 }
+
+/** Where logging in to Steam has got to. Never carries a password, code or token. */
+export type SteamLoginState =
+  | {
+      status: 'logged-out'
+      /** Why the last attempt, or the stored login, didn't work. */
+      error?: string
+      /** Whether a login can be remembered on this computer (it needs the system keychain). */
+      canRemember: boolean
+    }
+  | { status: 'connecting' }
+  | {
+      status: 'awaiting-code'
+      /** Where the code comes from: the account's email, or the Steam Mobile App. */
+      via: 'email' | 'device'
+      emailDomain?: string
+      /** The mobile app can approve the login instead of a code being typed. */
+      canConfirm: boolean
+      error?: string
+    }
+  | { status: 'awaiting-confirmation'; via: 'email' | 'device' }
+  | {
+      status: 'awaiting-qr'
+      /** The QR code's modules, row by row (true is dark). */
+      qr: boolean[][]
+      /** Scanned: the user is approving it on their phone. */
+      scanned: boolean
+    }
+  | { status: 'logged-in'; accountName: string; remembered: boolean }
+
+export type SteamLoginRequest =
+  | { method: 'credentials'; accountName: string; password: string; remember: boolean }
+  | { method: 'qr'; remember: boolean }
+
+export interface SteamPrepareRequest {
+  appId: number
+  branch: string
+  depotIds: number[]
+  destinationDir: string
+  /** Install into `destinationDir/<folder>` that already exists: what is there and correct is
+   * kept, and only what's missing or different is fetched. */
+  adopt: boolean
+}
+
+/** A download worked out and ready to start: startDownload takes its id. */
+export interface SteamPlan {
+  planId: string
+  appId: number
+  appName: string
+  /** The install folder's name, in destinationDir. */
+  folderName: string
+  destinationDir: string
+  fileCount: number
+  /** What is fetched: compressed and encrypted, as content servers send it. */
+  downloadBytes: number
+  /** What the install takes on disk. */
+  installBytes: number
+  /** Free on the destination's drive; null when it can't be told. */
+  freeBytes: number | null
+  /** Bytes already on disk and correct (installing over an existing folder). */
+  presentBytes: number
+  warnings: string[]
+}
+
+export interface SteamPrepareProgress {
+  appId: number
+  step: 'manifests' | 'checking'
+  done: number
+  total: number
+}

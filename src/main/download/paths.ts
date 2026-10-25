@@ -29,7 +29,7 @@ export async function pathExists(path: string): Promise<boolean> {
   }
 }
 
-function sanitizeFileName(fileName: string): string {
+export function sanitizeFileName(fileName: string): string {
   // A server-provided name is one component, never a path or NTFS data stream.
   let safe = fileName.replace(/[\\/]/g, '_').replace(/\p{Cc}/gu, '_')
   if (process.platform === 'win32') {

@@ -39,7 +39,7 @@ export default defineConfig(
     // Node and the chunk worker loads them in a worker thread, neither of which has Electron's
     // `app` (which testKnobs reads as it loads) or resolves electron-vite's `?` imports.
     files: [
-      'src/main/steam/{appInfo,cells,chunkCodec,crypto,layout,lzma,manifest,redact,scheduler,zip}.ts'
+      'src/main/steam/{appInfo,backend,cells,chunkCodec,crypto,eresult,layout,lzma,manifest,redact,scheduler,servers,zip}.ts'
     ],
     rules: {
       'no-restricted-imports': [
