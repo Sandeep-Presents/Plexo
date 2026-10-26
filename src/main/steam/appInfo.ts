@@ -43,6 +43,9 @@ const asSize = (value: unknown): number | undefined => {
 
 const asFlag = (value: unknown): boolean => asString(value) === '1'
 
+/** A language as Steam names one ("english", "schinese", "latam"). */
+const isLanguage = (value: string): boolean => /^[a-z_-]{1,40}$/.test(value)
+
 const OS_NAMES: Record<string, SteamOs> = { windows: 'windows', macos: 'macos', linux: 'linux' }
 
 function osList(value: unknown): SteamOs[] {
@@ -95,7 +98,7 @@ function readDepot(depotId: number, node: Node): SteamDepot {
     owned: false
   }
   if (arch === '32' || arch === '64') depot.osarch = arch as SteamArch
-  if (language && /^[a-z_-]{1,40}$/.test(language)) depot.language = language
+  if (language && isLanguage(language)) depot.language = language
   const dlcAppId = asId(node.dlcappid)
   if (dlcAppId !== undefined) depot.dlcAppId = dlcAppId
   const sharedFrom = asId(node.depotfromapp)
@@ -143,9 +146,20 @@ export function readAppInfo(appId: number, appinfo: unknown): SteamAppDetails {
     if (depotId !== undefined && node) depots.push(readDepot(depotId, node))
   }
   const name = (asString(common.name) ?? '').slice(0, 200) || `App ${appId}`
-  const languages = [
-    ...new Set(depots.flatMap((depot) => (depot.language ? [depot.language] : [])))
-  ].sort()
+  const packs = depots.flatMap((depot) => (depot.language ? [depot.language] : []))
+  // The content depots that name no language are in the app's base languages: English, unless
+  // appinfo says otherwise. A game whose language depots are only the other languages has its
+  // English there, so it has to be offered too, or English couldn't be picked at all and the
+  // first pack in the list would be the default.
+  const hasBase = depots.some(
+    (depot) => !depot.language && !depot.sharedInstall && depot.sharedFrom === undefined
+  )
+  const named = (asString(depotsNode.baselanguages) ?? '')
+    .split(',')
+    .map((entry) => entry.trim().toLowerCase())
+    .filter(isLanguage)
+  const base = hasBase && packs.length > 0 ? (named.length > 0 ? named : ['english']) : []
+  const languages = [...new Set([...packs, ...base])].sort()
   return {
     appId,
     name,

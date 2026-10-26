@@ -41,6 +41,22 @@ export function defaultDepots(details: SteamAppDetails, selection: SteamSelectio
     .map((depot) => depot.depotId)
 }
 
+/** What Steam's language names mean, where they aren't plain English words. */
+const LANGUAGE_NAMES: Record<string, string> = {
+  schinese: 'Chinese (Simplified)',
+  tchinese: 'Chinese (Traditional)',
+  koreana: 'Korean',
+  brazilian: 'Portuguese (Brazil)',
+  portuguese: 'Portuguese (Portugal)',
+  latam: 'Spanish (Latin America)',
+  spanish: 'Spanish (Spain)'
+}
+
+/** A language as people name it: "latam" is Spanish (Latin America). */
+export function languageName(language: string): string {
+  return LANGUAGE_NAMES[language] ?? language[0].toUpperCase() + language.slice(1)
+}
+
 /** The language to start with: English, else whichever comes first. */
 export function defaultLanguage(details: SteamAppDetails): string {
   return details.languages.includes('english') ? 'english' : (details.languages[0] ?? 'english')

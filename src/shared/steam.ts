@@ -59,7 +59,8 @@ export interface SteamAppDetails {
   installDir: string
   branches: SteamBranch[]
   depots: SteamDepot[]
-  /** Every language some depot is for, sorted. */
+  /** Every language it can be installed in, sorted: those of its language depots, and those its
+   * other depots are in (its base languages, usually English). */
   languages: string[]
 }
 

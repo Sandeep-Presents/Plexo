@@ -12,6 +12,7 @@ import {
   defaultDepots,
   defaultLanguage,
   depotUnavailable,
+  languageName,
   manifestFor,
   steamSystem
 } from '@shared/steamSelection'
@@ -270,10 +271,9 @@ export function InstallOptions({
             <Choice
               label="Language"
               value={selection.language}
-              options={details.languages.map((language) => ({
-                value: language,
-                label: language[0].toUpperCase() + language.slice(1)
-              }))}
+              options={details.languages
+                .map((language) => ({ value: language, label: languageName(language) }))
+                .sort((a, b) => a.label.localeCompare(b.label))}
               onChange={(language) => choose({ language })}
             />
           )}
@@ -519,7 +519,7 @@ function DepotRow({
   const manifest = manifestFor(depot, branch)
   const labels = [
     depot.dlcAppId !== undefined && 'DLC',
-    depot.language && depot.language[0].toUpperCase() + depot.language.slice(1),
+    depot.language && languageName(depot.language),
     depot.oslist.length > 0 &&
       depot.oslist.map((os) => SYSTEMS.find((s) => s.value === os)?.label).join(', '),
     depot.osarch && `${depot.osarch}-bit`,

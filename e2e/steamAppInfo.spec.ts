@@ -7,6 +7,7 @@ import {
   depotUnavailable,
   readAppInfo
 } from '../src/main/steam/appInfo'
+import { languageName } from '../src/shared/steamSelection'
 import type { SteamAppDetails } from '../src/shared/steam'
 
 // An app's appinfo, as steam-user parses Valve's KeyValues text: nested objects of strings, with
@@ -133,6 +134,7 @@ test.describe('steam appinfo', () => {
     fc.assert(
       fc.property(value, (appinfo) => {
         const details = readAppInfo(1, appinfo)
+        for (const language of details.languages) expect(language).toMatch(/^[a-z_-]{1,40}$/)
         for (const depot of details.depots) {
           expect(Number.isInteger(depot.depotId)).toBe(true)
           for (const manifest of Object.values(depot.manifests))
@@ -141,6 +143,52 @@ test.describe('steam appinfo', () => {
       }),
       { numRuns: 500 }
     )
+  })
+
+  test('a game with English in its base depots, and only other languages as packs, offers English', () => {
+    // As Hogwarts Legacy's appinfo has it: the content depot names no language, and each other
+    // language is a pack of its own.
+    const packs = { '9083': 'french', '9084': 'german', '9086': 'latam', '9089': 'brazilian' }
+    const appinfo = (baselanguages?: string): unknown => ({
+      common: { name: 'Castle', type: 'Game' },
+      depots: {
+        '9081': { manifests: { public: { gid: '1', size: '69000' } } },
+        '9082': { config: { oslist: 'windows' }, manifests: { public: { gid: '2' } } },
+        '2289': { depotfromapp: '228980', sharedinstall: '1' },
+        ...Object.fromEntries(
+          Object.entries(packs).map(([id, language]) => [
+            id,
+            { config: { language }, manifests: { public: { gid: id } } }
+          ])
+        ),
+        ...(baselanguages ? { baselanguages } : {})
+      }
+    })
+    const ids = [9081, 9082, 9083, 9084, 9086, 9089]
+    for (const base of [undefined, 'english']) {
+      const details = owned(readAppInfo(1, appinfo(base)), ids)
+      expect(details.languages).toEqual(['brazilian', 'english', 'french', 'german', 'latam'])
+      expect(defaultLanguage(details)).toBe('english')
+      const windows = { branch: 'public', os: 'windows', arch: '64' } as const
+      // English is the base: no pack.
+      expect(defaultDepots(details, { ...windows, language: 'english' })).toEqual([9081, 9082])
+      expect(defaultDepots(details, { ...windows, language: 'german' })).toEqual([9081, 9082, 9084])
+    }
+    // A game whose base is another language says so.
+    expect(readAppInfo(1, appinfo('japanese')).languages).toEqual([
+      'brazilian',
+      'french',
+      'german',
+      'japanese',
+      'latam'
+    ])
+    // With no packs, there is nothing to choose.
+    expect(
+      readAppInfo(480, { depots: { '481': { manifests: { public: '1' } } } }).languages
+    ).toEqual([])
+    expect(languageName('latam')).toBe('Spanish (Latin America)')
+    expect(languageName('brazilian')).toBe('Portuguese (Brazil)')
+    expect(languageName('german')).toBe('German')
   })
 
   test('English is the language to start with when there is one; this computer maps to Steam’s names', () => {
