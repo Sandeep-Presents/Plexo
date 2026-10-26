@@ -35,6 +35,10 @@ export type LibraryLoad =
 
 export type LibraryFilter = 'all' | 'installed' | 'not-installed'
 
+/** Which of the library's apps are listed: games (demos and betas too), tools (Steam's tools and
+ * software), or both. */
+export type LibraryKind = 'games' | 'tools' | 'all'
+
 interface AppStore {
   interfaces: NetworkInterfaceInfo[]
   interfacesStatus: LoadStatus
@@ -62,6 +66,7 @@ interface AppStore {
   /** What the library's search and filter are set to, kept while the window shows other things. */
   libraryQuery: string
   libraryFilter: LibraryFilter
+  libraryKind: LibraryKind
   /** The apps the Steam client itself has installed on this computer. */
   clientApps: number[]
   /** Persisted — how many downloads run at once; the rest wait in the queue. */
@@ -95,6 +100,7 @@ interface AppStore {
   loadLibrary: (refresh?: boolean) => Promise<void>
   setLibraryQuery: (query: string) => void
   setLibraryFilter: (filter: LibraryFilter) => void
+  setLibraryKind: (kind: LibraryKind) => void
   loadClientApps: () => Promise<void>
   setDownloadsAtOnce: (count: number) => void
   /** Each one applies at once, to every download (see main/network/limits.ts). */
@@ -135,6 +141,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   library: { status: 'idle' },
   libraryQuery: '',
   libraryFilter: 'all',
+  libraryKind: 'games',
   clientApps: [],
   downloadsAtOnce: initial.downloadsAtOnce,
   speedLimit: initial.speedLimit,
@@ -225,6 +232,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
   setLibraryQuery: (libraryQuery) => set({ libraryQuery }),
   setLibraryFilter: (libraryFilter) => set({ libraryFilter }),
+  setLibraryKind: (libraryKind) => set({ libraryKind }),
 
   loadClientApps: async () => {
     const clientApps = await window.netfuse.steamClientApps().catch(() => [])

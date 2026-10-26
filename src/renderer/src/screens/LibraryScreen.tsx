@@ -2,12 +2,13 @@ import type { SteamOwnedApp } from '@shared/steam'
 import { cn } from 'cn'
 import { AlertTriangle, Check, RefreshCw, Search } from 'lucide-react'
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { FilterMenu } from '../components/FilterMenu'
 import { GameCapsule } from '../components/GameArt'
 import { FamilySharing } from '../components/steam/FamilySharing'
 import { Button } from '../components/ui/button'
 import { ToggleGroup, ToggleGroupItem } from '../components/ui/toggle-group'
 import { useGameState } from '../hooks/useGameState'
-import { useAppStore, type LibraryFilter } from '../store/useAppStore'
+import { useAppStore, type LibraryFilter, type LibraryKind } from '../store/useAppStore'
 import { describeGameState } from '../utils/gameState'
 
 // The account's Steam library: every game it owns, by its picture, with where each stands here
@@ -23,6 +24,17 @@ const CAPTION_PX = 44
 /** Rows drawn beyond the visible ones, so a quick scroll doesn't show blanks. */
 const OVERSCAN_ROWS = 2
 
+const KINDS: { value: LibraryKind; label: string }[] = [
+  { value: 'games', label: 'Games' },
+  { value: 'tools', label: 'Tools' },
+  { value: 'all', label: 'Games & tools' }
+]
+
+/** Which list an app belongs in, from its appinfo type. Steam lists its software ("application")
+ * with its tools; demos and betas are games. */
+const kindOf = (app: SteamOwnedApp): Exclude<LibraryKind, 'all'> =>
+  app.type === 'tool' || app.type === 'application' ? 'tools' : 'games'
+
 const FILTERS: { value: LibraryFilter; label: string }[] = [
   { value: 'all', label: 'All' },
   { value: 'installed', label: 'Installed' },
@@ -37,6 +49,8 @@ export function LibraryScreen(): React.JSX.Element {
   const setQuery = useAppStore((store) => store.setLibraryQuery)
   const filter = useAppStore((store) => store.libraryFilter)
   const setFilter = useAppStore((store) => store.setLibraryFilter)
+  const kind = useAppStore((store) => store.libraryKind)
+  const setKind = useAppStore((store) => store.setLibraryKind)
   const history = useAppStore((store) => store.history)
   const clientApps = useAppStore((store) => store.clientApps)
 
@@ -55,7 +69,10 @@ export function LibraryScreen(): React.JSX.Element {
     [history, clientApps]
   )
 
-  const all = library.status === 'ready' ? library.apps : []
+  const owned = library.status === 'ready' ? library.apps : []
+  const kindCounts: Record<LibraryKind, number> = { games: 0, tools: 0, all: owned.length }
+  for (const app of owned) kindCounts[kindOf(app)]++
+  const all = kind === 'all' ? owned : owned.filter((app) => kindOf(app) === kind)
   const needle = query.trim().toLowerCase()
   const apps = all.filter(
     (app) =>
@@ -66,7 +83,15 @@ export function LibraryScreen(): React.JSX.Element {
   return (
     <div className="flex h-full flex-col bg-background">
       <div className="flex h-12 shrink-0 items-center gap-3 border-b-[0.5px] border-border px-5">
-        <h1 className="shrink-0 text-[15px] font-semibold">Steam library</h1>
+        <div className="-ml-2.5 shrink-0">
+          <FilterMenu
+            options={KINDS}
+            value={kind}
+            counts={kindCounts}
+            onChange={setKind}
+            label="Show in the library"
+          />
+        </div>
         {library.status === 'ready' && (
           <span className="hidden shrink-0 font-mono text-[11.5px] text-muted-foreground tabular-nums min-[1000px]:inline">
             {apps.length === all.length ? all.length : `${apps.length} of ${all.length}`}
@@ -134,7 +159,7 @@ export function LibraryScreen(): React.JSX.Element {
       )}
       {library.status === 'ready' &&
         apps.length === 0 &&
-        (all.length === 0 ? (
+        (owned.length === 0 ? (
           <Message>This account owns nothing that can be downloaded.</Message>
         ) : (
           <div role="status" className="flex flex-col items-center gap-3 px-5 py-16 text-center">
@@ -145,9 +170,10 @@ export function LibraryScreen(): React.JSX.Element {
               onClick={() => {
                 setQuery('')
                 setFilter('all')
+                setKind('all')
               }}
             >
-              Show every game
+              Show everything
             </Button>
           </div>
         ))}
@@ -234,7 +260,7 @@ const GameCard = memo(function GameCard({
   const status = describeGameState(state)
   const going = state.kind === 'downloading' || state.kind === 'paused' || state.kind === 'queued'
   const installed = state.kind === 'installed' || state.kind === 'in-steam'
-  const kind = app.type !== 'game' ? app.type[0].toUpperCase() + app.type.slice(1) : null
+  const typeLabel = app.type !== 'game' ? app.type[0].toUpperCase() + app.type.slice(1) : null
 
   return (
     <button
@@ -273,7 +299,7 @@ const GameCard = memo(function GameCard({
             state.kind === 'error' ? 'text-[var(--color-danger)]' : 'text-muted-foreground'
           )}
         >
-          {status ?? kind ?? (app.borrowed ? null : ' ')}
+          {status ?? typeLabel ?? (app.borrowed ? null : ' ')}
           {!status && app.borrowed && <FamilySharing />}
         </span>
       </div>

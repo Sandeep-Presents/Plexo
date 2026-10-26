@@ -161,8 +161,50 @@ test.describe('the window', () => {
       .getByRole('button', { name: 'Installed', exact: true })
       .click()
     await expect(page.getByText('Nothing in your library matches')).toBeVisible()
-    await page.getByRole('button', { name: 'Show every game' }).click()
+    await page.getByRole('button', { name: 'Show everything' }).click()
     await expect(library(netfuse).getByRole('button', { name: 'Game 000' })).toBeVisible()
+  })
+
+  test('the library lists games by default, and tools or both when asked', async ({
+    netfuse,
+    serveSteam
+  }) => {
+    const otherApps = [
+      { appId: 7010, name: 'Level Editor', type: 'Tool' },
+      { appId: 7020, name: 'Wallpaper Studio', type: 'Application' },
+      { appId: 7030, name: 'Starfall Demo', type: 'Demo' }
+    ]
+    await serveSteam(undefined, { otherApps })
+    await netfuse.loginSteam()
+    const page = netfuse.page
+    const names = (): Promise<string[]> =>
+      library(netfuse)
+        .getByRole('button')
+        .evaluateAll((buttons) => buttons.map((button) => button.getAttribute('aria-label') ?? ''))
+
+    await expect(library(netfuse).getByRole('button', { name: 'NetFuse Test Game' })).toBeVisible()
+    expect(await names()).toEqual(['NetFuse Test Game', 'Starfall Demo'])
+
+    const show = async (label: string): Promise<void> => {
+      await page
+        .getByRole('heading')
+        .getByRole('button', { name: /^(Games|Tools|Games & tools)$/ })
+        .click()
+      // Each says how many it has, after its name.
+      await page.getByRole('menuitemradio', { name: new RegExp(`^${label}`) }).click()
+    }
+    await show('Tools')
+    await expect(library(netfuse).getByRole('button', { name: 'Level Editor' })).toBeVisible()
+    expect(await names()).toEqual(['Level Editor', 'Wallpaper Studio'])
+    await show('Games & tools')
+    await expect(library(netfuse).getByRole('button')).toHaveCount(4)
+
+    // The choice holds while the window shows other things.
+    await nav(netfuse, 'Downloads').click()
+    await nav(netfuse, 'Steam').click()
+    await expect(
+      page.getByRole('heading').getByRole('button', { name: 'Games & tools' })
+    ).toBeVisible()
   })
 
   test('Auto-detect finds the Steam libraries, and installs into the one that has the game', async ({

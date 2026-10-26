@@ -37,7 +37,7 @@
 
 ## What it does
 
-- **Your whole Steam library**, by its pictures: search it, and see at a glance what's installed, downloading or installed by Steam itself
+- **Your whole Steam library**, by its pictures: games by default, or tools, or both. Search it, and see at a glance what's installed, downloading or installed by Steam itself
 - **Every network at once**: a game's chunks are spread across the connections you choose, and faster networks fetch more
 - **Log in the way Steam lets you**: account name and password with a Steam Guard code (email or the Steam Mobile App), or a QR code
 - **Choose what to install**: branch, system, architecture, language and depots, with download size, install size and free space shown
