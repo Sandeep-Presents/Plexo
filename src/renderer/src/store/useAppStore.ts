@@ -1,4 +1,6 @@
 import { applyDownloadUpdate } from '@shared/downloadUpdate'
+import { describeError } from '@shared/errors'
+import type { SteamLoginState, SteamOwnedApp } from '@shared/steam'
 import type {
   AppSettings,
   DownloadSchedule,
@@ -8,7 +10,6 @@ import type {
   NetworkInterfaceInfo,
   NetworkPreference,
   NetworkPreferences,
-  PendingLink,
   SpeedUnit,
   ThemeSource
 } from '@shared/types'
@@ -18,8 +19,25 @@ export type DownloadFilter = 'all' | 'progress' | 'finished' | 'failed'
 
 type LoadStatus = 'idle' | 'loading' | 'ready' | 'error'
 
-/** What the window shows: the list of downloads, or one download. */
-export type View = { name: 'list' } | { name: 'download'; id: string }
+/** What the window shows: a launcher's library (Steam's, so far), one game, the list of
+ * downloads, or one download. */
+export type View =
+  | { name: 'library' }
+  | { name: 'game'; appId: number }
+  | { name: 'downloads' }
+  | { name: 'download'; id: string }
+
+/** The games the account owns, as Steam last listed them. */
+export type LibraryLoad =
+  | { status: 'idle' | 'loading' }
+  | { status: 'ready'; apps: SteamOwnedApp[] }
+  | { status: 'error'; message: string }
+
+export type LibraryFilter = 'all' | 'installed' | 'not-installed'
+
+/** Which of the library's apps are listed: games (demos and betas too), tools (Steam's tools and
+ * software), or both. */
+export type LibraryKind = 'games' | 'tools' | 'all'
 
 interface AppStore {
   interfaces: NetworkInterfaceInfo[]
@@ -42,8 +60,15 @@ interface AppStore {
   downloadFilter: DownloadFilter
   setDownloadFilter: (filter: DownloadFilter) => void
   downloadSchedule: DownloadSchedule | undefined
-  /** The New download dialog, over whatever the window shows. */
-  newDownloadOpen: boolean
+  /** The Steam login as main last said; null until the window has asked. */
+  steamLogin: SteamLoginState | null
+  library: LibraryLoad
+  /** What the library's search and filter are set to, kept while the window shows other things. */
+  libraryQuery: string
+  libraryFilter: LibraryFilter
+  libraryKind: LibraryKind
+  /** The apps the Steam client itself has installed on this computer. */
+  clientApps: number[]
   /** Persisted — how many downloads run at once; the rest wait in the queue. */
   downloadsAtOnce: number
   /** Persisted — the speed limits (see AppSettings). */
@@ -53,18 +78,7 @@ interface AppStore {
   /** Persisted — MB/s or Mbps, for every speed shown. */
   speedUnit: SpeedUnit
 
-  /** Lifted out of the Idle screen so it survives a swap to/from the No-connections screen. */
-  draftUrl: string
-  /** Handed-over links stacked in New download, oldest first. */
-  links: PendingLink[]
-  /** Null while New download shows a link typed or pasted there instead. Links are named by
-   * id, never by position: the list changes while a start is under way. */
-  shownId: string | null
-  /** Bumped to remount New download's form for another link. */
-  formKey: number
-  /** The link last started: still on the clipboard afterwards, so not offered again. */
-  startedUrl: string
-  /** Persisted — the last folder picked, falling back to downloadsDir. */
+  /** Persisted — the games folder last picked, falling back to downloadsDir. */
   destinationDir: string
 
   /** Asks the main process for the network list now; it also pushes every change. */
@@ -79,37 +93,33 @@ interface AppStore {
   /** Drops a download from the window's view once the main process has removed it. */
   forgetDownload: (id: string) => void
   setView: (view: View) => void
-  /** Opens New download, with `link` in its link field when one is given. */
-  openNewDownload: (link?: string) => void
-  closeNewDownload: () => void
-  receiveLinks: () => Promise<void>
-  showLink: (id: string) => void
-  /** If it was the one shown, the newest left is shown, or New download closes. */
-  finishLink: (id: string, started: boolean) => void
-  /** Leaves what New download shows alone, the typed link included. */
-  dropLink: (id: string, started: boolean) => void
+  /** Opens a game's own page. */
+  openGame: (appId: number) => void
+  receiveSteamLogin: (state: SteamLoginState) => void
+  /** Lists the library, once; `refresh` asks Steam again. */
+  loadLibrary: (refresh?: boolean) => Promise<void>
+  setLibraryQuery: (query: string) => void
+  setLibraryFilter: (filter: LibraryFilter) => void
+  setLibraryKind: (kind: LibraryKind) => void
+  loadClientApps: () => Promise<void>
   setDownloadsAtOnce: (count: number) => void
   /** Each one applies at once, to every download (see main/network/limits.ts). */
   setSpeedLimit: (bytesPerSec: number | undefined) => void
   setSlowMode: (on: boolean) => void
   setSlowModeSpeed: (bytesPerSec: number) => void
   setSpeedUnit: (unit: SpeedUnit) => void
-  setDraftUrl: (url: string) => void
   setDestinationDir: (dir: string) => void
 }
 
 // Settings saved by the main process, read once before the first paint (see InitialState).
-const initial = window.plexo.initialState
+const initial = window.netfuse.initialState
 
 /** Every setting changes optimistically: the store is updated first so the UI feels instant,
  * then this saves it. The store stays the source of truth either way — a failed save just means
  * the change isn't remembered next launch. */
 function persist(patch: AppSettings): void {
-  window.plexo.updateSettings(patch).catch(() => {})
+  window.netfuse.updateSettings(patch).catch(() => {})
 }
-
-/** Links let go here: a listing main sent before it heard so would bring them back. */
-const letGo = new Set<string>()
 
 export const useAppStore = create<AppStore>((set, get) => ({
   interfaces: [],
@@ -123,22 +133,22 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
   downloads: {},
   history: [],
-  view: { name: 'list' },
+  view: { name: 'library' },
   downloadFilter: 'all',
   setDownloadFilter: (downloadFilter) => set({ downloadFilter }),
   downloadSchedule: initial.downloadSchedule,
-  newDownloadOpen: false,
+  steamLogin: null,
+  library: { status: 'idle' },
+  libraryQuery: '',
+  libraryFilter: 'all',
+  libraryKind: 'games',
+  clientApps: [],
   downloadsAtOnce: initial.downloadsAtOnce,
   speedLimit: initial.speedLimit,
   slowMode: initial.slowMode,
   slowModeSpeed: initial.slowModeSpeed,
   speedUnit: initial.speedUnit,
 
-  draftUrl: '',
-  links: [],
-  shownId: null,
-  formKey: 0,
-  startedUrl: '',
   destinationDir: initial.destinationDir ?? initial.downloadsDir,
 
   loadInterfaces: async () => {
@@ -146,7 +156,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
     if (get().interfacesStatus !== 'ready') set({ interfacesStatus: 'loading' })
     set({ interfacesError: null })
     try {
-      get().receiveInterfaces(await window.plexo.listInterfaces())
+      get().receiveInterfaces(await window.netfuse.listInterfaces())
     } catch (error) {
       set({
         interfacesStatus: 'error',
@@ -197,51 +207,36 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
   setView: (view) => set({ view }),
 
-  openNewDownload: (link) =>
-    set(link === undefined ? { newDownloadOpen: true } : { newDownloadOpen: true, draftUrl: link }),
+  openGame: (appId) => set({ view: { name: 'game', appId } }),
 
-  closeNewDownload: () => {
-    const { links, shownId } = get()
-    if (shownId) return get().finishLink(shownId, false)
-    if (links.length > 0) return get().showLink(links[links.length - 1].id)
-    set({ newDownloadOpen: false })
+  receiveSteamLogin: (steamLogin) => {
+    const was = get().steamLogin
+    set({ steamLogin })
+    // Another account owns other things: back to a library to be listed afresh.
+    if (was?.status === 'logged-in' && steamLogin.status !== 'logged-in') {
+      set({ library: { status: 'idle' }, view: { name: 'library' } })
+    }
   },
 
-  receiveLinks: async () => {
-    // main lists every link still waiting, so a window that was closed or reloaded gets them back.
-    const pending = await window.plexo.pendingLinks().catch(() => [])
-    const known = new Set(get().links.map((link) => link.id))
-    const arrived = pending.filter((link) => !known.has(link.id) && !letGo.has(link.id))
-    if (arrived.length === 0) return
-    set({ links: [...get().links, ...arrived], newDownloadOpen: true })
-    get().showLink(arrived[arrived.length - 1].id)
+  loadLibrary: async (refresh = false) => {
+    const { library } = get()
+    if (!refresh && library.status !== 'idle' && library.status !== 'error') return
+    set({ library: { status: 'loading' } })
+    try {
+      const apps = await window.netfuse.steamOwnedApps(refresh)
+      set({ library: { status: 'ready', apps } })
+    } catch (error) {
+      set({ library: { status: 'error', message: describeError(error) } })
+    }
   },
 
-  showLink: (id) => {
-    const link = get().links.find((candidate) => candidate.id === id)
-    if (link) set({ shownId: id, draftUrl: link.url, formKey: get().formKey + 1 })
-  },
+  setLibraryQuery: (libraryQuery) => set({ libraryQuery }),
+  setLibraryFilter: (libraryFilter) => set({ libraryFilter }),
+  setLibraryKind: (libraryKind) => set({ libraryKind }),
 
-  finishLink: (id, started) => {
-    const wasShown = get().shownId === id
-    get().dropLink(id, started)
-    if (!wasShown) return
-    const left = get().links
-    set({ draftUrl: '' })
-    if (left.length > 0) get().showLink(left[left.length - 1].id)
-    else set({ newDownloadOpen: false })
-  },
-
-  dropLink: (id, started) => {
-    const { links, shownId } = get()
-    if (!links.some((link) => link.id === id)) return
-    letGo.add(id)
-    // Started, main has already forgotten its sign-in.
-    if (!started) void window.plexo.dismissLink(id).catch(() => {})
-    set({
-      links: links.filter((link) => link.id !== id),
-      ...(shownId === id && { shownId: null })
-    })
+  loadClientApps: async () => {
+    const clientApps = await window.netfuse.steamClientApps().catch(() => [])
+    set({ clientApps })
   },
 
   setDownloadsAtOnce: (downloadsAtOnce) => {
@@ -269,7 +264,6 @@ export const useAppStore = create<AppStore>((set, get) => ({
     persist({ speedUnit })
   },
 
-  setDraftUrl: (draftUrl) => set({ draftUrl }),
   setDestinationDir: (destinationDir) => {
     set({ destinationDir })
     persist({ destinationDir })

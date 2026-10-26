@@ -21,145 +21,49 @@ export interface NetworkInterfaceInfo {
   mac?: string
 }
 
-interface ProbeResultBase {
-  requestedUrl: string
-  /** URL after following redirects — this is what the download should actually fetch. */
-  finalUrl: string
-  supportsRanges: boolean
-  /** null when the server did not report a size. */
-  totalBytes: number | null
-  suggestedFileName: string
-  contentType: string | null
-  /** Strong validators, used to detect if the remote content changes between pause and resume. */
-  etag: string | null
-  lastModified: string | null
-}
-
-export interface HttpProbeResult extends ProbeResultBase {
-  kind: 'http'
-}
-
-export interface TorrentProbeResult extends ProbeResultBase {
-  kind: 'torrent'
-  torrent: TorrentInfo
-}
-
-export type ProbeResult = HttpProbeResult | TorrentProbeResult
-
-/** How the check of a magnet link is going, while it's still going: `noPeersYet` once its first
- * search came back empty and it's looking a little longer. */
-export interface MagnetCheckStatus {
-  /** The link as it was given to probeUrl. */
-  link: string
-  noPeersYet: boolean
-}
-
-export interface TorrentInfo {
-  infoHash: string
-  pieceLength: number
-  /** Where each file will be written, relative to the destination folder, already checked to be
-   * safe (see main/download/torrent/paths.ts). */
-  files: { path: string; length: number }[]
-}
-
-/** One of a torrent download's files, for listing them while it runs. */
-export interface TorrentFileEntry {
-  /** As TorrentInfo's: relative to the destination folder, the torrent's own folder first. */
-  path: string
-  length: number
-  /** Chosen to be downloaded. */
-  chosen: boolean
-}
-
 /** `queued`: waiting for one of the downloads running at once to end (see
  * AppSettings.downloadsAtOnce). */
 export type DownloadStatus =
   'queued' | 'downloading' | 'paused' | 'completed' | 'error' | 'cancelled'
 
-/** An HTTP stream's state. `pending` means it is waiting for work: it holds no block, either because
+/** A stream's state. `pending` means it is waiting for work: it holds no chunk, either because
  * none is free for it right now or because it hasn't started. `downloading` always means it is
- * fetching one (`currentBlockIndex` says which). A stream that fails for good leaves the list;
- * what went wrong is its network's to report (see DownloadNetwork). */
-export type HttpStreamStatus =
+ * fetching one. A stream that fails for good leaves the list; what went wrong is its network's to
+ * report (see DownloadNetwork). */
+export type StreamStatus =
   'pending' | 'downloading' | 'retrying' | 'paused' | 'completed' | 'cancelled'
 
-/** One connection to the server, through one network. Streams come and go as the download
- * runs; what a network has done is kept on its DownloadNetwork. */
-export interface HttpStreamState {
-  id: number
-  /** The network it runs on: a DownloadNetwork's id. */
-  interfaceId: string
-  rangeStart: number
-  /** null means an open-ended range (download to end of file). */
-  rangeEnd: number | null
-  /** New bytes it has delivered. */
-  bytesDownloaded: number
-  speedBytesPerSec: number
-  status: HttpStreamStatus
-  /** The block this stream is fetching. Unset whenever it holds none (idle, retrying, paused, done). */
-  currentBlockIndex?: number
-  /** True while this stream is racing another stream for `currentBlockIndex`, because that one
-   * was too slow — see main/download/scheduler.ts. Whichever finishes first wins. */
-  hedge?: boolean
-}
-
-/** A live BitTorrent peer connection. A peer does not own a piece: it may contribute blocks to
- * several pieces, and several peers may contribute to one piece. */
-export interface TorrentPeerState {
-  /** Unique in the download, in the order its peers connected: "Peer #(id + 1)". */
-  id: number
-  interfaceId: string
-  status: 'connected' | 'receiving'
-  /** The client it runs, as its peer id names it ("qBittorrent 4.6.2"); null when unknown. */
-  client: string | null
-  bytesDownloaded: number
-  speedBytesPerSec: number
-  bytesUploaded: number
-  uploadSpeedBytesPerSec: number
-}
-
-export type HttpBlockStatus = 'pending' | 'downloading' | 'completed'
-/** `skipped`: a piece that none of the files chosen for this torrent needs. */
-export type TorrentPieceStatus = HttpBlockStatus | 'skipped'
+export type CellStatus = 'pending' | 'downloading' | 'completed'
 
 interface WorkUnitState {
   index: number
   rangeStart: number
   rangeEnd: number | null
-  /** The network currently leasing this block (or the last one to touch it). Only meaningful
-   * as "who is working on it now" — for who actually *delivered* the bytes, read
-   * `bytesByInterface`, since a block can be started on one network and finished on another
-   * after a retry or a pause/resume. */
+  /** The network that delivered most of it, drawn as its color. */
   interfaceId?: string
   bytesDownloaded: number
-  /** Bytes of this block delivered by each network, keyed by interface id. Summing to
-   * `bytesDownloaded`, this is what the block grid colors by, so a block split across
-   * networks is attributed to all of them instead of only the one that happened to finish it. */
+  /** Bytes of it delivered by each network, keyed by interface id, summing to `bytesDownloaded`. */
   bytesByInterface: Record<string, number>
 }
 
-export interface HttpBlockState extends WorkUnitState {
-  kind: 'http'
-  status: HttpBlockStatus
+/** A Steam download's grid square: a run of its depot chunks, about equal in download bytes. A
+ * game has tens of thousands of chunks, too many to draw (or send) one by one. Its range is in
+ * download bytes, the chunks' compressed sizes laid end to end, not in any one file. */
+export interface SteamCellState extends WorkUnitState {
+  kind: 'steam'
+  status: CellStatus
 }
 
-export interface TorrentPieceState extends WorkUnitState {
-  kind: 'torrent'
-  status: TorrentPieceStatus
-  /** Bytes received in this run but not yet hash-verified. This is live activity, not durable
-   * progress, and may fall back to zero after a failed verification. */
-  provisionalBytes: number
-}
-
-export type DownloadUnitState = HttpBlockState | TorrentPieceState
+/** A download's grid square, whichever launcher it is from. */
+export type DownloadUnitState = SteamCellState
 
 /**
  * - on: in use.
  * - off: the user switched it off. A network that turns up mid-download starts off.
  * - offline: not connected to this computer. It's used again as soon as it is.
- * - unreachable: connected, but the server can't be reached through it. One connection keeps
+ * - unreachable: connected, but the servers can't be reached through it. One connection keeps
  *   trying, and the rest follow once it gets through.
- * - failed: the server kept refusing requests over it (`error` says how). Switching it off and
+ * - failed: the servers kept refusing requests over it (`error` says how). Switching it off and
  *   on, reconnecting it, or resuming tries again.
  * - limit: it has used up its data for the chosen period (NetworkPreference.dataLimit). It's used again
  *   once the period ends or the limit is raised.
@@ -177,31 +81,25 @@ interface DownloadNetworkBase {
   enabled: boolean
   status: NetworkStatus
   error?: string
-  /** Bytes of the file it delivered. */
+  /** Bytes it delivered. */
   bytesDownloaded: number
   speedBytesPerSec: number
   /** Requests over it that failed and were tried again. */
   retries: number
 }
 
-export interface HttpDownloadNetwork extends DownloadNetworkBase {
-  transfer: 'http'
+export interface SteamDownloadNetwork extends DownloadNetworkBase {
+  transfer: 'steam'
 }
 
-export interface TorrentDownloadNetwork extends DownloadNetworkBase {
-  transfer: 'torrent'
-  bytesUploaded: number
-  uploadSpeedBytesPerSec: number
-}
-
-export type DownloadNetwork = HttpDownloadNetwork | TorrentDownloadNetwork
+export type DownloadNetwork = SteamDownloadNetwork
 
 interface DownloadStateBase {
   id: string
+  /** Where it comes from, as a link (steam://app/<id>): what tells two downloads of one game. */
   url: string
   fileName: string
   destinationPath: string
-  /** 0 means the size could not be determined ahead of time. */
   totalBytes: number
   bytesDownloaded: number
   speedBytesPerSec: number
@@ -211,7 +109,7 @@ interface DownloadStateBase {
   status: DownloadStatus
   error?: string
   /** For an error: whether resuming can pick up where it stopped. False when the progress was
-   * thrown away, e.g. the file changed on the server. */
+   * thrown away. */
   resumable?: boolean
   startedAt: number
   /** Enrolled in the scheduled queue; survives relaunches until manually paused. */
@@ -231,69 +129,74 @@ interface DownloadStateBase {
   seq?: number
 }
 
-export interface HttpDownloadState extends DownloadStateBase {
-  kind: 'http'
-  networks: HttpDownloadNetwork[]
-  streams: HttpStreamState[]
+/** One connection to a Steam content server, through one network, fetching whole depot chunks.
+ * Streams come and go as the download runs; what a network has done is kept on its network. */
+export interface SteamStreamState {
+  id: number
+  interfaceId: string
+  /** The content server it asks. */
+  host: string
+  status: StreamStatus
+  /** Chunk bytes it delivered that were new: a lost race isn't counted. */
+  bytesDownloaded: number
+  speedBytesPerSec: number
+  /** The grid cell of the chunk it is fetching; unset whenever it holds none. */
+  currentCellIndex?: number
+  /** How far it has got with that chunk, and the chunk's size. */
+  chunkReceived?: number
+  chunkBytes?: number
+  /** Racing another stream for the chunk near the end, because that one is slow (see
+   * steam/scheduler.ts). Whichever finishes first wins. */
+  hedge?: boolean
+}
+
+/** A game (or any app) installed from Steam: its chosen depots' files, in a folder of its own.
+ * Sizes count download bytes (what content servers send, compressed and encrypted); the install
+ * is `installBytes` on disk. */
+export interface SteamDownloadState extends DownloadStateBase {
+  kind: 'steam'
+  networks: SteamDownloadNetwork[]
+  streams: SteamStreamState[]
   peakStreams: number
-  blocks: HttpBlockState[]
-  totalBlocks: number
-  blockSizeBytes: number
+  cells: SteamCellState[]
+  totalCells: number
+  totalChunks: number
+  chunksDone: number
+  app: { appId: number; name: string; branch: string; buildId?: string }
+  depots: { depotId: number; manifestId: string; name: string }[]
+  fileCount: number
+  installBytes: number
+  /** Installed into a folder that already existed: removing it never trashes the folder, and
+   * cancelling only removes what this download created. */
+  adopted?: boolean
+  /** What a run is doing before its chunks come in: making the install's files and folders. */
+  phase?: 'preparing'
   /** The disk can't keep up: most streams are waiting for their writes (see concurrency.ts). */
   diskLimited?: boolean
-  fromBrowser?: string
 }
 
-export interface TorrentDownloadState extends DownloadStateBase {
-  kind: 'torrent'
-  networks: TorrentDownloadNetwork[]
-  peers: TorrentPeerState[]
-  peakPeers: number
-  pieces: TorrentPieceState[]
-  totalPieces: number
-  pieceLength: number
-  /** How many files it has, how many are chosen, and which (by index; unset: every one). */
-  files: { chosen: number; total: number; selected?: number[] }
-  /** Its files come in the torrent's folder (`fileName`), rather than as one file. */
-  folder: boolean
-  /** Of `totalBytes`, the bytes of pieces that no chosen file needs. */
-  skippedBytes: number
-  bytesUploaded: number
-  uploadSpeedBytesPerSec: number
-}
-
-export type DownloadState = HttpDownloadState | TorrentDownloadState
+/** A download, whichever launcher it is from: only Steam so far. */
+export type DownloadState = SteamDownloadState
 
 /** A finished download as history keeps it: its state without the work units and connections,
  * which only a running download needs. */
-export type FinishedDownload = (
-  Omit<HttpDownloadState, 'blocks' | 'streams'> | Omit<TorrentDownloadState, 'pieces' | 'peers'>
-) & {
-  /** The blocks or pieces it was written in (a torrent's: those its chosen files needed). */
+export type FinishedDownload = Omit<SteamDownloadState, 'cells' | 'streams'> & {
+  /** The chunks it was written in. */
   unitsWritten: number
-  /** Set when listed: its file or folder is no longer where it was saved. */
+  /** Set when listed: its folder is no longer where it was saved. */
   missing?: boolean
-  /** Chosen torrent files relative to its destination folder, retained for safe file removal. */
-  downloadedFiles?: string[]
 }
 
-/** What the main process sends as a download changes: everything but its blocks, and only the
- * blocks that changed since it last sent. A download can have tens of thousands of blocks, and
- * copying every one several times a second would cost the process that carries every byte. A
- * snapshot is the same with every block in it. */
-export interface HttpDownloadUpdate {
+/** What the main process sends as a download changes: everything but its cells, and only the
+ * cells that changed since it last sent, at most every 200 ms. A snapshot is the same with every
+ * cell in it. */
+export interface SteamDownloadUpdate {
   seq: number
-  state: Omit<HttpDownloadState, 'blocks'>
-  blocks: HttpBlockState[]
+  state: Omit<SteamDownloadState, 'cells'>
+  cells: SteamCellState[]
 }
 
-export interface TorrentDownloadUpdate {
-  seq: number
-  state: Omit<TorrentDownloadState, 'pieces'>
-  pieces: TorrentPieceState[]
-}
-
-export type DownloadUpdate = HttpDownloadUpdate | TorrentDownloadUpdate
+export type DownloadUpdate = SteamDownloadUpdate
 
 /** User customization for one physical network, keyed by NetworkInterfaceInfo.id — lets a
  * cryptic OS device name (e.g. "feth0") get a real label, and a color distinct from its
@@ -305,12 +208,12 @@ export interface NetworkPreference {
   /** One of the app's curated swatch ids (see NETWORK_COLOR_SWATCHES) — not a raw hex, so every
    * swatch is guaranteed to have a legible on-solid text color already picked out for it. */
   colorId?: string
-  /** Left out of the last download started, so New download starts without it too (it remembers
-   * the last pick, like the folder). A click there puts it back. */
+  /** Left out of the last download started, so the next one starts without it too (the last
+   * pick is remembered, like the folder). A click puts it back. */
   off?: boolean
   /** Bytes a second all downloads together may take over it. */
   speedLimit?: number
-  /** Bytes Plexo may receive in the chosen calendar period. */
+  /** Bytes NetFuse may receive in the chosen calendar period. */
   dataLimit?: number
   /** Defaults to month for existing settings. Weeks start Monday in local time. */
   dataLimitPeriod?: DataLimitPeriod
@@ -346,7 +249,7 @@ export interface AppSettings {
   themeSource?: ThemeSource
   /** Only ever saved as false: updates download on their own unless turned off. */
   autoUpdate?: boolean
-  /** The last destination folder picked. */
+  /** The folder games were last saved to: a Steam library's steamapps/common, often. */
   destinationDir?: string
   /** User customizations (name/color) per network interface id. */
   networkPreferences?: NetworkPreferences
@@ -359,7 +262,6 @@ export interface AppSettings {
   slowModeSpeed?: number
   /** How speeds are shown everywhere; sizes stay in bytes either way. */
   speedUnit?: SpeedUnit
-  browserExtensionUsed?: boolean
 }
 
 /** bytes: MB/s. bits: Mbps, as internet plans and speed tests count them. */
@@ -388,63 +290,28 @@ export interface InitialState {
   destinationDir?: string
 }
 
-interface StartDownloadRequestBase {
-  url: string
-  destinationDir: string
-  suggestedFileName: string
-  /** 0 means unknown. */
-  totalBytes: number
-  supportsRanges: boolean
+/** A Steam download worked out by steamPrepare (see SteamPlan). */
+export interface StartSteamDownloadRequest {
+  kind: 'steam'
+  planId: string
   /** The networks to start on. Every other one starts switched off. */
   interfaceIds: string[]
-  etag: string | null
-  lastModified: string | null
-}
-
-export interface StartHttpDownloadRequest extends StartDownloadRequestBase {
-  kind: 'http'
   /** Streams per network the user picked; left out, the count is decided automatically. */
   streamsPerNetwork?: number
-  browser?: BrowserContext
 }
 
-/** The fields of chrome.cookies.Cookie that decide where it's sent. */
-export interface BrowserCookie {
-  name: string
-  value: string
-  /** With or without a leading dot: `hostOnly` decides whether subdomains get it. */
-  domain: string
-  hostOnly: boolean
-  path: string
-  secure: boolean
+/** What a Steam download saves to be resumed: what it installs, from what, and where. Never a
+ * key or token; those are asked of Steam again each run. */
+export interface SteamRequestPayload {
+  kind: 'steam'
+  appId: number
+  branch: string
+  /** In the order they are installed: a later depot's copy of a file wins. */
+  depots: { depotId: number; manifestId: string }[]
+  /** The folder the install folder is in. */
+  destinationDir: string
+  interfaceIds: string[]
+  streamsPerNetwork?: number
 }
 
-/** So a link that needs a signed-in session, or checks the page it came from, works as it does
- * in the browser. */
-export interface BrowserContext {
-  cookies: BrowserCookie[]
-  referer?: string
-  userAgent?: string
-  name?: string
-}
-
-export interface PendingLink {
-  id: string
-  url: string
-  /** Reused by New download: checking a single-use link again would spend it. */
-  probe?: ProbeResult
-  from?: string
-  signedInTo?: string
-  /** A failed download this looks like the same file as, for the user to resume instead. */
-  resumes?: { id: string; fileName: string }
-}
-
-export interface StartTorrentDownloadRequest extends StartDownloadRequestBase {
-  kind: 'torrent'
-  /** The download starts from the .torrent retained when this info hash was probed. */
-  infoHash: string
-  /** For a torrent: the files to download, as indexes into its probe's `files`. Left out: all. */
-  selectedFiles?: number[]
-}
-
-export type StartDownloadRequest = StartHttpDownloadRequest | StartTorrentDownloadRequest
+export type StartDownloadRequest = StartSteamDownloadRequest

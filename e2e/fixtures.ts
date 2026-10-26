@@ -11,7 +11,6 @@ import {
   expect,
   test as base,
   type ElectronApplication,
-  type Locator,
   type Page
 } from '@playwright/test'
 import type { IpcContract } from '../src/shared/ipc-contract'
@@ -20,22 +19,23 @@ import type {
   DownloadState,
   DownloadStatus,
   DownloadUpdate,
-  HttpDownloadState,
-  TorrentDownloadState
+  SteamDownloadState
 } from '../src/shared/types'
-import { Origin, sha256, type OriginOptions } from './origin'
+import { sha256 } from './steamContent'
+import {
+  ACCOUNT,
+  GUARD_CODE,
+  OWNED_DEPOTS,
+  SteamOrigin,
+  type SteamAppFixture,
+  type SteamOriginOptions
+} from './steamOrigin'
 
 export { expect }
 
-export function expectHttp(state: DownloadState): HttpDownloadState {
-  expect(state.kind).toBe('http')
-  if (state.kind !== 'http') throw new Error('Expected an HTTP download')
-  return state
-}
-
-export function expectTorrent(state: DownloadState): TorrentDownloadState {
-  expect(state.kind).toBe('torrent')
-  if (state.kind !== 'torrent') throw new Error('Expected a torrent download')
+export function expectSteam(state: DownloadState): SteamDownloadState {
+  expect(state.kind).toBe('steam')
+  if (state.kind !== 'steam') throw new Error('Expected a Steam download')
   return state
 }
 
@@ -46,16 +46,13 @@ export function electronArgs(entry: string, args: string[] = []): string[] {
   return [entry, ...args, ...(process.platform === 'linux' ? ['--no-sandbox'] : [])]
 }
 
-/** Small blocks so a ~1 MB test file still splits into many of them. */
-export const BLOCK = 64 * 1024
-
 /**
  * The second test "network": this machine's LAN address. A request bound to it still reaches
- * the loopback test server, but arrives from a different source address — which is how the
- * server tells the two networks apart. Found (and checked to work) by global-setup.ts; null
+ * the loopback fake Steam, but arrives from a different source address — which is how the
+ * content servers tell the two networks apart. Found (and checked to work) by global-setup.ts; null
  * where there's no usable one, and the multi-network tests skip.
  */
-export const LAN_ADDRESS = process.env.PLEXO_E2E_LAN || null
+export const LAN_ADDRESS = process.env.NETFUSE_E2E_LAN || null
 
 export const NETWORKS = LAN_ADDRESS
   ? { a: '127.0.0.1', b: LAN_ADDRESS }
@@ -71,16 +68,14 @@ type Api = {
   [K in keyof IpcContract]: (...args: IpcContract[K]['args']) => Promise<IpcContract[K]['result']>
 }
 
-interface StartOptions {
+interface SteamStartOptions {
+  depots?: number[]
   networks?: string[]
   /** Streams per network, fixed so a test can count requests; 'auto' lets the app decide. */
   connections?: number | 'auto'
-  /** With connections 'auto': the streams per network picked on the start screen. */
-  streamsPerNetwork?: number
-  fileName?: string
   destinationDir?: string
-  /** For a torrent: the files to download, by index. */
-  selectedFiles?: number[]
+  /** Install into the existing folder named after the game. */
+  adopt?: boolean
 }
 
 interface Tracked {
@@ -91,16 +86,16 @@ interface Tracked {
 }
 
 /**
- * Drives one Plexo instance through the same `window.plexo` API the renderer uses — nothing
+ * Drives one NetFuse instance through the same `window.netfuse` API the renderer uses — nothing
  * below this reaches into the main process's internals, so refactoring them can't break a test
  * that still describes correct behavior.
  */
-export class PlexoApp {
+export class NetFuseApp {
   electronApp!: ElectronApplication
   page!: Page
   /** Every downloadUpdated state, one array per app launch (a relaunch starts a new one). */
   readonly sessions: DownloadState[][] = []
-  /** The same, as the window was sent them: only the blocks that changed. */
+  /** The same, as the window was sent them: only the cells that changed. */
   readonly updates: DownloadUpdate[][] = []
   readonly tracked = new Map<string, Tracked>()
   readonly output: string[] = []
@@ -111,7 +106,7 @@ export class PlexoApp {
     private extraEnv: Record<string, string> = {}
   ) {}
 
-  /** `args` follow the app on its command line, as a link the OS hands over would. */
+  /** `args` follow the app on its command line. */
   async launch(extraEnv: Record<string, string> = {}, args: string[] = []): Promise<this> {
     Object.assign(this.extraEnv, extraEnv)
     let retries = 5
@@ -121,21 +116,18 @@ export class PlexoApp {
           args: electronArgs(PROJECT_ROOT, args),
           env: {
             ...(process.env as Record<string, string>),
-            PLEXO_USER_DATA: this.dirs.userData,
-            PLEXO_E2E_HIDE_WINDOW: '1',
-            PLEXO_E2E_BLOCK_BYTES: String(BLOCK),
-            PLEXO_E2E_RETRY_BASE_MS: '20',
-            PLEXO_E2E_STALL_MS: '1500',
+            NETFUSE_USER_DATA: this.dirs.userData,
+            NETFUSE_E2E_HIDE_WINDOW: '1',
+            NETFUSE_E2E_RETRY_BASE_MS: '20',
+            NETFUSE_E2E_STALL_MS: '1500',
             // A busy server gives up after its retries alone, as any other wrong answer does,
             // unless a test waits it out on purpose.
-            PLEXO_E2E_SERVER_BUSY_MS: '1',
+            NETFUSE_E2E_SERVER_BUSY_MS: '1',
             // Off unless a test asks for it: a hedge is an extra request, and most tests count them.
-            PLEXO_E2E_HEDGE_MS: '600000',
+            NETFUSE_E2E_HEDGE_MS: '600000',
             // Fixed for the same reason, and for downloads started through the UI.
-            PLEXO_E2E_STREAMS: '2',
-            PLEXO_E2E_INTERFACES: interfacesEnv(NETWORKS),
-            // Torrent tests find their peers from the link itself; a run never joins the real DHT.
-            PLEXO_E2E_DHT: '0',
+            NETFUSE_E2E_STREAMS: '2',
+            NETFUSE_E2E_INTERFACES: interfacesEnv(NETWORKS),
             ...this.extraEnv
           }
         })
@@ -161,7 +153,7 @@ export class PlexoApp {
     this.updates.push(updates)
     // Kept whole, the way the window puts them together: each download from its own last state.
     const latest = new Map<string, DownloadState>()
-    await this.page.exposeFunction('__plexoRecord', (update: DownloadUpdate) => {
+    await this.page.exposeFunction('__netfuseRecord', (update: DownloadUpdate) => {
       updates.push(update)
       const previous = latest.get(update.state.id) ?? null
       const state = applyDownloadUpdate(previous, update)
@@ -171,8 +163,8 @@ export class PlexoApp {
       }
     })
     await this.page.evaluate(() => {
-      const w = window as unknown as { __plexoRecord: (s: unknown) => void }
-      window.plexo.onDownloadUpdated((update) => w.__plexoRecord(update))
+      const w = window as unknown as { __netfuseRecord: (s: unknown) => void }
+      window.netfuse.onDownloadUpdated((update) => w.__netfuseRecord(update))
     })
     return this
   }
@@ -213,7 +205,7 @@ export class PlexoApp {
       (...args: unknown[]) =>
         this.page.evaluate(
           ([method, params]) =>
-            (window.plexo as unknown as Record<string, (...a: unknown[]) => unknown>)[method](
+            (window.netfuse as unknown as Record<string, (...a: unknown[]) => unknown>)[method](
               ...params
             ),
           [name, args] as const
@@ -229,49 +221,76 @@ export class PlexoApp {
   private async pinStreams(connections: number | 'auto' = 2): Promise<void> {
     await this.evaluateMain(
       (_electron, value) => {
-        if (value === null) delete process.env.PLEXO_E2E_STREAMS
-        else process.env.PLEXO_E2E_STREAMS = value
+        if (value === null) delete process.env.NETFUSE_E2E_STREAMS
+        else process.env.NETFUSE_E2E_STREAMS = value
       },
       connections === 'auto' ? null : String(connections)
     )
   }
 
-  /** Probes and starts `url` exactly the way IdleScreen's Start button does. */
-  async start(url: string, expectedSha: string, options: StartOptions = {}): Promise<string> {
+  /** Points the app at `steam` for Steam itself, for this launch and the next. */
+  async useSteam(steam: SteamOrigin): Promise<void> {
+    this.extraEnv.NETFUSE_E2E_STEAM = steam.url
+    await this.evaluateMain((_electron, url) => {
+      process.env.NETFUSE_E2E_STEAM = url
+    }, steam.url)
+  }
+
+  /** Logs in to the fake Steam with the test account, typing the Steam Guard code if asked. */
+  async loginSteam(): Promise<void> {
+    await this.api.steamLogin({
+      method: 'credentials',
+      accountName: ACCOUNT.name,
+      password: ACCOUNT.password,
+      remember: false
+    })
+    const deadline = Date.now() + 10_000
+    while (Date.now() < deadline) {
+      const state = await this.api.steamLoginState()
+      if (state.status === 'logged-in') return
+      if (state.status === 'awaiting-code') await this.api.steamSubmitCode(GUARD_CODE)
+      if (state.status === 'logged-out') {
+        throw new Error(`Steam login failed: ${state.error ?? 'logged out'}`)
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    }
+    throw new Error('Steam login timed out')
+  }
+
+  /** Plans and starts a Steam download of `steam`'s app as the Steam dialog does, logging in
+   * first if need be. */
+  async startSteam(steam: SteamOrigin, options: SteamStartOptions = {}): Promise<string> {
     await this.pinStreams(options.connections)
+    if ((await this.api.steamLoginState()).status !== 'logged-in') await this.loginSteam()
     await this.api.listInterfaces()
-    const probe = await this.api.probeUrl(url)
-    const multiChunk = probe.supportsRanges && probe.totalBytes !== null
-    const networks = options.networks ?? ['a']
+    const depots = options.depots ?? OWNED_DEPOTS
     const destinationDir = options.destinationDir ?? this.dirs.dest
     const destBefore = existsSync(destinationDir) ? await readdir(destinationDir) : []
-
-    const common = {
-      url: probe.finalUrl,
+    const plan = await this.api.steamPrepare({
+      appId: steam.app.appId,
+      branch: 'public',
+      depotIds: depots,
       destinationDir,
-      suggestedFileName: options.fileName ?? probe.suggestedFileName,
-      totalBytes: probe.totalBytes ?? 0,
-      supportsRanges: multiChunk,
-      interfaceIds: multiChunk ? networks : networks.slice(0, 1),
-      etag: probe.etag,
-      lastModified: probe.lastModified
-    }
-    const id = await this.api.startDownload(
-      probe.kind === 'torrent'
-        ? {
-            ...common,
-            kind: 'torrent',
-            infoHash: probe.torrent.infoHash,
-            selectedFiles: options.selectedFiles
-          }
-        : { ...common, kind: 'http', streamsPerNetwork: options.streamsPerNetwork }
-    )
-    this.tracked.set(id, { expectedSha, destBefore, destinationDir })
+      adopt: options.adopt ?? false
+    })
+    const id = await this.api.startDownload({
+      kind: 'steam',
+      planId: plan.planId,
+      interfaceIds: options.networks ?? ['a']
+    })
+    this.tracked.set(id, { expectedSha: steam.expectedSha(depots), destBefore, destinationDir })
     return id
   }
 
-  /** For downloads started through the UI rather than start(): declares what the next one
-   * should produce, so the automatic checks can verify it. Call before clicking Start. */
+  async waitForSteamStatus(
+    status: DownloadStatus | DownloadStatus[],
+    timeout = 20_000
+  ): Promise<SteamDownloadState> {
+    return expectSteam(await this.waitForStatus(status, timeout))
+  }
+
+  /** For downloads started through the UI rather than startSteam(): declares what the next one
+   * should produce, so the automatic checks can verify it. Call before clicking Download. */
   async expectNextDownload(expectedSha: string): Promise<void> {
     this.nextDownload = {
       expectedSha,
@@ -282,29 +301,18 @@ export class PlexoApp {
 
   nextDownload: Tracked | null = null
 
-  /** Opens New download as its button does, and gives its link field. */
-  async newDownload(): Promise<Locator> {
-    const link = this.page.getByRole('textbox', { name: 'Link' })
-    if (!(await link.isVisible())) {
-      await this.page.getByRole('button', { name: 'New download' }).first().click()
-    }
-    return link
-  }
-
   /** Every download, running or finished, oldest first. A finished one comes from history, so it
-   * has no work units left. */
+   * has no cells left. */
   async all(): Promise<DownloadState[]> {
     const running = (await this.api.listDownloads()).map((snapshot) =>
       applyDownloadUpdate(null, snapshot)!
     )
-    // As the window was last sent it, when this launch saw it finish: blocks and all.
+    // As the window was last sent it, when this launch saw it finish: cells and all.
     const seen = this.sessions.at(-1) ?? []
     const finished = (await this.api.listHistory()).map((entry): DownloadState => {
       const last = seen.findLast((state) => state.id === entry.id)
       if (last?.status === 'completed') return last
-      return entry.kind === 'http'
-        ? { ...entry, blocks: [], streams: [] }
-        : { ...entry, pieces: [], peers: [] }
+      return { ...entry, cells: [], streams: [] }
     })
     // One that finished between the two calls is in both: history has its final state.
     const done = new Set(finished.map((state) => state.id))
@@ -331,30 +339,6 @@ export class PlexoApp {
     return this.waitUntil((state) => wanted.includes(state.status), timeout)
   }
 
-  async waitForHttpStatus(
-    status: DownloadStatus | DownloadStatus[],
-    timeout = 20_000
-  ): Promise<HttpDownloadState> {
-    return expectHttp(await this.waitForStatus(status, timeout))
-  }
-
-  async waitForTorrentStatus(
-    status: DownloadStatus | DownloadStatus[],
-    timeout = 20_000
-  ): Promise<TorrentDownloadState> {
-    return expectTorrent(await this.waitForStatus(status, timeout))
-  }
-
-  async currentHttp(): Promise<HttpDownloadState | null> {
-    const state = await this.current()
-    return state ? expectHttp(state) : null
-  }
-
-  async currentTorrent(): Promise<TorrentDownloadState | null> {
-    const state = await this.current()
-    return state ? expectTorrent(state) : null
-  }
-
   /** Waits until the download state matches `predicate`. A timeout says what the state was
    * instead, so a hang shows the last progress and state. */
   async waitUntil(
@@ -371,11 +355,9 @@ export class PlexoApp {
     const networks = state?.networks.map(
       (network) => `${network.id}:${network.status}${network.error ? ` (${network.error})` : ''}`
     )
-    const connections = state
-      ? (state.kind === 'http' ? state.streams : state.peers).map(
-          (connection) => `${connection.interfaceId}:${connection.status}`
-        )
-      : undefined
+    const connections = state?.streams.map(
+      (connection) => `${connection.interfaceId}:${connection.status}`
+    )
     throw new Error(
       `Timed out after ${timeout} ms waiting on the download. Last seen: ${
         state
@@ -400,8 +382,8 @@ const ALLOWED_NEXT: Record<DownloadStatus, DownloadStatus[]> = {
 }
 
 /** Rules every download event must satisfy, whatever the scenario. Node assertions keep this
- * exhaustive scan synchronous without creating a report step for every block of every event.
- * Failures still carry the download, status and work-unit context. */
+ * exhaustive scan synchronous without creating a report step for every cell of every event.
+ * Failures still carry the download, status and cell context. */
 export function checkEvents(sessions: DownloadState[][]): void {
   for (const events of sessions) {
     const lastStatus = new Map<string, DownloadStatus>()
@@ -413,98 +395,33 @@ export function checkEvents(sessions: DownloadState[][]): void {
           `${label}: bytesDownloaded ≤ totalBytes`
         )
       }
-      const units = state.kind === 'http' ? state.blocks : state.pieces
+      const cells = state.cells
       assert.equal(
-        units.every((unit, index) => unit.index === index),
+        cells.every((cell, index) => cell.index === index),
         true,
-        `${label}: every work unit is there, in order`
+        `${label}: every cell is there, in order`
       )
-      assert.equal(
-        units.length,
-        state.kind === 'http' ? state.totalBlocks : state.totalPieces,
-        `${label}: as many work units as planned`
-      )
-      for (const unit of units) {
-        const attributed = Object.values(unit.bytesByInterface).reduce((a, b) => a + b, 0)
+      assert.equal(cells.length, state.totalCells, `${label}: as many cells as planned`)
+      for (const cell of cells) {
+        const attributed = Object.values(cell.bytesByInterface).reduce((a, b) => a + b, 0)
         assert.equal(
           attributed,
-          unit.bytesDownloaded,
-          `${label}: unit ${unit.index} attribution sums to its bytes`
+          cell.bytesDownloaded,
+          `${label}: cell ${cell.index} attribution sums to its bytes`
         )
-        if (unit.rangeEnd !== null) {
-          const size = unit.rangeEnd - unit.rangeStart + 1
-          assert.ok(unit.bytesDownloaded <= size, `${label}: unit ${unit.index} within its size`)
-          if (unit.status === 'completed') {
+        if (cell.rangeEnd !== null) {
+          const size = cell.rangeEnd - cell.rangeStart + 1
+          assert.ok(cell.bytesDownloaded <= size, `${label}: cell ${cell.index} within its size`)
+          if (cell.status === 'completed') {
             assert.equal(
-              unit.bytesDownloaded,
+              cell.bytesDownloaded,
               size,
-              `${label}: completed unit ${unit.index} is full`
+              `${label}: completed cell ${cell.index} is full`
             )
           }
         }
-        if (unit.kind === 'torrent') {
-          assert.ok(unit.provisionalBytes >= 0)
-          assert.ok(
-            unit.provisionalBytes <=
-              (unit.rangeEnd === null ? 0 : unit.rangeEnd - unit.rangeStart + 1)
-          )
-        }
       }
-      if (state.kind === 'torrent') {
-        assert.equal(
-          new Set(state.peers.map((peer) => peer.id)).size,
-          state.peers.length,
-          `${label}: peer IDs are unique across networks`
-        )
-        // Peers are connections, not piece owners. Each belongs to one known network and exposes
-        // only transfer telemetry; verified progress belongs to pieces above.
-        for (const peer of state.peers) {
-          assert.ok(
-            state.networks.map((network) => network.id).includes(peer.interfaceId),
-            `${label}: peer ${peer.id} is on a network of this download`
-          )
-          assert.ok(['connected', 'receiving'].includes(peer.status))
-        }
-        const uploaded = state.networks.reduce((sum, network) => sum + network.bytesUploaded, 0)
-        assert.equal(
-          uploaded,
-          state.bytesUploaded,
-          `${label}: the networks' uploads add up to the download's`
-        )
-      } else if (state.status === 'downloading') {
-        // A stream holds a block exactly while it is fetching it. A block has at most one stream
-        // fetching it for real and two racing it as hedges, and is in flight whenever the first
-        // is there. What the stream rows show is only as true as this.
-        const primaries = new Map<number, number>()
-        const hedges = new Map<number, number>()
-        for (const stream of state.streams) {
-          const holding = stream.currentBlockIndex !== undefined
-          assert.equal(
-            holding,
-            stream.status === 'downloading',
-            `${label}: stream ${stream.id} (${stream.status}) holds a block`
-          )
-          if (stream.currentBlockIndex === undefined) {
-            assert.ok(!stream.hedge, `${label}: idle stream ${stream.id} is not racing`)
-            continue
-          }
-          const tally = stream.hedge ? hedges : primaries
-          tally.set(stream.currentBlockIndex, (tally.get(stream.currentBlockIndex) ?? 0) + 1)
-        }
-        for (const [index, count] of primaries) {
-          assert.equal(count, 1, `${label}: block ${index} has one stream fetching it`)
-        }
-        for (const [index, count] of hedges) {
-          assert.ok(count <= 2, `${label}: block ${index} has at most two hedges`)
-        }
-        for (const index of primaries.keys()) {
-          assert.equal(
-            state.blocks[index]?.status,
-            'downloading',
-            `${label}: held block ${index} is in flight`
-          )
-        }
-      }
+      checkSteamEvent(state, label)
       const previous = lastStatus.get(state.id)
       if (previous) {
         assert.ok(
@@ -517,8 +434,52 @@ export function checkEvents(sessions: DownloadState[][]): void {
   }
 }
 
+/** A download's streams are on its networks and hold a grid cell exactly while fetching, and its
+ * byte counts agree everywhere they are shown. */
+function checkSteamEvent(state: SteamDownloadState, label: string): void {
+  const networks = new Set(state.networks.map((network) => network.id))
+  assert.equal(
+    new Set(state.streams.map((stream) => stream.id)).size,
+    state.streams.length,
+    `${label}: stream IDs are unique across networks`
+  )
+  for (const stream of state.streams) {
+    assert.ok(networks.has(stream.interfaceId), `${label}: stream ${stream.id} is on a network`)
+    assert.equal(
+      stream.currentCellIndex !== undefined,
+      stream.status === 'downloading',
+      `${label}: stream ${stream.id} (${stream.status}) holds a cell`
+    )
+    if (stream.currentCellIndex !== undefined && !stream.hedge) {
+      assert.equal(
+        state.cells[stream.currentCellIndex]?.status,
+        'downloading',
+        `${label}: held cell ${stream.currentCellIndex} is in flight`
+      )
+    }
+  }
+  const inCells = state.cells.reduce((sum, cell) => sum + cell.bytesDownloaded, 0)
+  const byNetworks = state.networks.reduce((sum, network) => sum + network.bytesDownloaded, 0)
+  assert.equal(inCells, state.bytesDownloaded, `${label}: the cells add up to the download`)
+  assert.equal(byNetworks, state.bytesDownloaded, `${label}: the networks add up to the download`)
+  assert.ok(state.chunksDone <= state.totalChunks, `${label}: chunksDone ≤ totalChunks`)
+  if (state.status === 'completed') {
+    assert.ok(
+      state.cells.every((cell) => cell.status === 'completed'),
+      `${label}: a completed download has every cell done`
+    )
+    assert.equal(state.chunksDone, state.totalChunks, `${label}: every chunk is done`)
+  }
+  if (state.phase === 'preparing') {
+    assert.ok(
+      state.streams.every((stream) => stream.status !== 'downloading'),
+      `${label}: nothing is fetched while preparing`
+    )
+  }
+}
+
 /** A folder's files as one hash: each file's path (relative, with `/`) and the SHA-256 of its
- * bytes, in path order. What a multi-file torrent's download is checked against. */
+ * bytes, in path order. What an install is checked against. */
 export function treeSha(files: { path: string; data: Buffer }[]): string {
   const lines = files
     .map((file) => `${file.path}\0${sha256(file.data)}\n`)
@@ -559,7 +520,7 @@ async function openFilesUnder(pid: number, roots: string[]): Promise<string[]> {
  * The end-of-test rules: once a download has finished (either way), what's on disk must be
  * exactly right. The one that matters most: `completed` never means wrong bytes.
  */
-export async function checkFinalState(app: PlexoApp): Promise<void> {
+export async function checkFinalState(app: NetFuseApp): Promise<void> {
   const states = await app.all()
   const latest = states.at(-1)
   const checked = states.flatMap((state) => {
@@ -572,22 +533,20 @@ export async function checkFinalState(app: PlexoApp): Promise<void> {
   if (checked.length === 0 || !checked.every(({ state }) => terminal(state.status))) return
 
   for (const { state, tracked } of checked) {
-    // A failed download keeps its progress to be resumed until the user moves on, as the
-    // window's New Download does: after that, nothing may be left.
+    // A failed download keeps its progress to be resumed until the user moves on: after that,
+    // nothing of it may be left.
     if (state.status === 'error') await app.api.removeDownload(state.id)
 
     if (state.status === 'completed') {
       expect(await shaOfPath(state.destinationPath), 'completed download matches its source').toBe(
         tracked.expectedSha
       )
+    } else if (state.adopted) {
+      // Installed into a folder that was there before: it stays, whatever happens to the download.
+      expect(existsSync(state.destinationPath), 'the existing folder is left').toBe(true)
     } else {
-      expect(existsSync(state.destinationPath), 'no file left at the destination').toBe(false)
+      expect(existsSync(state.destinationPath), 'no install left at the destination').toBe(false)
     }
-
-    const stagingPath = `${state.destinationPath}.plexo`
-    await expect
-      .poll(() => existsSync(stagingPath), { message: 'staging file cleaned up', timeout: 5000 })
-      .toBe(false)
   }
 
   // Each folder gains exactly the downloads that completed into it, and nothing else.
@@ -597,13 +556,17 @@ export async function checkFinalState(app: PlexoApp): Promise<void> {
     const before = new Set(into[0].tracked.destBefore)
     const destAfter = existsSync(destinationDir) ? await readdir(destinationDir) : []
     const added = destAfter.filter((name) => !before.has(name)).sort()
-    const expectedAdded = into
-      .filter(({ state }) => state.status === 'completed')
-      .map(({ state }) => state.destinationPath.split(/[\\/]/).pop())
-      .sort()
-    expect(added, 'no stray files (placeholders, partials) in the destination folder').toEqual(
-      expectedAdded
-    )
+    // A Steam install into an existing folder adds no name of its own (nor does a second
+    // install into the folder an earlier one made).
+    const expectedAdded = [
+      ...new Set(
+        into
+          .filter(({ state }) => state.status === 'completed')
+          .map(({ state }) => state.destinationPath.split(/[\\/]/).pop()!)
+          .filter((name) => !before.has(name))
+      )
+    ].sort()
+    expect(added, 'no stray files or folders in the destination folder').toEqual(expectedAdded)
   }
 
   const pid = app.electronApp.process().pid
@@ -624,19 +587,19 @@ export async function makeDirs(): Promise<{
   dirs: { userData: string; dest: string }
   dispose: () => Promise<void>
 }> {
-  const root = await realpath(await mkdtemp(join(tmpdir(), 'plexo-e2e-')))
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'netfuse-e2e-')))
   const dirs = { userData: join(root, 'userData'), dest: join(root, 'dest') }
   await Promise.all([mkdir(dirs.userData), mkdir(dirs.dest)])
   return { dirs, dispose: () => rm(root, { recursive: true, force: true, maxRetries: 5 }) }
 }
 
 interface Fixtures {
-  /** Extra environment for the app, e.g. `test.use({ appEnv: { PLEXO_E2E_RETRY_BASE_MS: '2000' } })`. */
+  /** Extra environment for the app, e.g. `test.use({ appEnv: { NETFUSE_E2E_RETRY_BASE_MS: '2000' } })`. */
   appEnv: Record<string, string>
   dirs: { userData: string; dest: string }
-  /** Starts a test server; every one started is stopped after the test. */
-  serve: (options: OriginOptions) => Promise<Origin>
-  plexo: PlexoApp
+  /** Starts a fake Steam and points the app at it; stopped after the test. */
+  serveSteam: (app?: SteamAppFixture, options?: SteamOriginOptions) => Promise<SteamOrigin>
+  netfuse: NetFuseApp
   checks: void
 }
 
@@ -650,23 +613,23 @@ export const test = base.extend<Fixtures>({
     await dispose()
   },
 
-  // eslint-disable-next-line no-empty-pattern
-  serve: async ({}, use, testInfo) => {
-    const origins: Origin[] = []
-    await use(async (options) => {
-      const origin = await new Origin(options).start()
-      origins.push(origin)
-      return origin
+  serveSteam: async ({ netfuse }, use, testInfo) => {
+    const origins: SteamOrigin[] = []
+    await use(async (app, options) => {
+      const steam = await new SteamOrigin(app, options).start()
+      origins.push(steam)
+      await netfuse.useSteam(steam)
+      return steam
     })
     if (testInfo.status !== testInfo.expectedStatus) {
       const log = origins.map((origin) => origin.log)
-      await testInfo.attach('server-requests.json', { body: JSON.stringify(log, null, 2) })
+      await testInfo.attach('steam-requests.json', { body: JSON.stringify(log, null, 2) })
     }
     await Promise.all(origins.map((origin) => origin.stop()))
   },
 
-  plexo: async ({ dirs, appEnv }, use, testInfo) => {
-    const app = new PlexoApp(dirs, { ...appEnv })
+  netfuse: async ({ dirs, appEnv }, use, testInfo) => {
+    const app = new NetFuseApp(dirs, { ...appEnv })
     await app.launch()
     await use(app)
     if (testInfo.status !== testInfo.expectedStatus) {
@@ -679,16 +642,16 @@ export const test = base.extend<Fixtures>({
   },
 
   checks: [
-    async ({ plexo }, use, testInfo) => {
+    async ({ netfuse }, use, testInfo) => {
       await use()
       // A test already failing (or expected to fail) has said what it needed to.
       if (testInfo.status !== 'passed' || testInfo.expectedStatus !== 'passed') return
-      checkEvents(plexo.sessions)
+      checkEvents(netfuse.sessions)
       // Listeners piling up on one stream or emitter: harmless today, a leak tomorrow.
-      expect(plexo.output.join(''), 'the app warned of a listener leak').not.toContain(
+      expect(netfuse.output.join(''), 'the app warned of a listener leak').not.toContain(
         'MaxListenersExceededWarning'
       )
-      if (plexo.alive) await checkFinalState(plexo)
+      if (netfuse.alive) await checkFinalState(netfuse)
     },
     { auto: true }
   ]

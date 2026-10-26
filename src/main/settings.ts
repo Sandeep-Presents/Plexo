@@ -1,4 +1,3 @@
-import { rm } from 'node:fs/promises'
 import { isAbsolute, join } from 'node:path'
 import { app, nativeTheme } from 'electron'
 import {
@@ -89,7 +88,6 @@ function sanitizeSettings(parsed: unknown): AppSettings {
   if (parsed.speedUnit === 'bytes' || parsed.speedUnit === 'bits') {
     settings.speedUnit = parsed.speedUnit
   }
-  if (parsed.browserExtensionUsed === true) settings.browserExtensionUsed = true
   return settings
 }
 
@@ -120,20 +118,4 @@ export async function loadThemeSource(): Promise<ThemeSource> {
   const { themeSource } = await loadSettings()
   // First run — follow whatever the OS appearance is right now rather than a fixed theme.
   return themeSource ?? (nativeTheme.shouldUseDarkColors ? 'dark' : 'light')
-}
-
-/** Network names/colors lived in their own network-preferences.json up to 1.0.0-rc.8. Folds
- * that file into app-settings.json once, then deletes it (a corrupt one is just deleted). */
-export async function migrateLegacyNetworkPreferences(): Promise<void> {
-  const legacyPath = join(app.getPath('userData'), 'network-preferences.json')
-  const legacy = await readJson(legacyPath)
-  if (legacy !== undefined) {
-    await updateJson(settingsPath(), (current) => {
-      const settings = sanitizeSettings(current)
-      return settings.networkPreferences
-        ? settings
-        : { ...settings, networkPreferences: sanitizeNetworkPreferences(legacy) }
-    })
-  }
-  await rm(legacyPath, { force: true })
 }

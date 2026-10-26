@@ -1,16 +1,12 @@
 name: E2E nightly
 
-# The whole e2e suite — including the @disk and @chaos tiers the PR job skips — on both
-# platforms, with the race-prone tests repeated so an intermittent failure shows up here
-# rather than in someone's download.
+# The whole e2e suite — including the @disk tier the PR job skips — on both platforms, with the
+# race-prone tests repeated so an intermittent failure shows up here rather than in someone's
+# download.
 on:
   schedule:
     - cron: '0 3 * * *'
   workflow_dispatch:
-    inputs:
-      chaos_runs:
-        description: Random chaos sequences to try
-        default: '50'
 
 jobs:
   e2e:
@@ -21,8 +17,6 @@ jobs:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
-    env:
-      PLEXO_CHAOS_RUNS: ${{ github.event.inputs.chaos_runs || '50' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -45,18 +39,18 @@ jobs:
         if: runner.os == 'Linux'
         run: xvfb-run --auto-servernum --server-args="-screen 0 1280x1024x24 -noreset" npx playwright test
         env:
-          PLEXO_E2E_SKIP_BUILD: '1'
+          NETFUSE_E2E_SKIP_BUILD: '1'
 
       - name: Full suite (Windows)
         if: runner.os == 'Windows'
         run: npx playwright test
         env:
-          PLEXO_E2E_SKIP_BUILD: '1'
+          NETFUSE_E2E_SKIP_BUILD: '1'
 
       - name: Race-prone tests, repeated
-        run: ${{ runner.os == 'Linux' && 'xvfb-run --auto-servernum --server-args="-screen 0 1280x1024x24 -noreset" ' || '' }}npx playwright test e2e/lifecycle.spec.ts e2e/recovery.spec.ts --repeat-each=10
+        run: ${{ runner.os == 'Linux' && 'xvfb-run --auto-servernum --server-args="-screen 0 1280x1024x24 -noreset" ' || '' }}npx playwright test e2e/steamLifecycle.spec.ts --repeat-each=10
         env:
-          PLEXO_E2E_SKIP_BUILD: '1'
+          NETFUSE_E2E_SKIP_BUILD: '1'
 
       - name: Upload report
         if: failure()

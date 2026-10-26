@@ -39,6 +39,6 @@ export function useNetworkVisuals(): ResolveNetworkVisual {
     const networks = new Map<string, NetworkInterfaceKind>(JSON.parse(known))
     const colors = assignNetworkColors(networks, preferences)
     return (id, kind, osName) =>
-      resolveNetworkVisual(kind, osName, preferences[id], colors.get(id) ?? 'teal')
+      resolveNetworkVisual(kind, osName, preferences[id], colors.get(id) ?? 'green')
   }, [known, preferences])
 }

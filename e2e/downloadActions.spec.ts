@@ -17,9 +17,9 @@ function download(
 ): DownloadItem {
   return {
     id: 'a',
-    kind: 'http',
-    url: 'https://example.com/f.bin',
-    fileName: 'f.bin',
+    kind: 'steam',
+    url: 'steam://app/480',
+    fileName: 'Spacewar',
     bytesDownloaded: 100,
     totalBytes: 1000,
     ...patch
@@ -40,70 +40,41 @@ const ids = (items: DownloadItem[]): ActionId[] =>
 test.describe('what each state offers', () => {
   test('downloading and queued', () => {
     for (const status of ['downloading', 'queued'] as const)
-      expect(ids([download({ status })])).toEqual(['pause', 'reveal', 'copy', 'cancel'])
+      expect(ids([download({ status })])).toEqual(['pause', 'reveal', 'cancel'])
   })
 
   test('paused', () => {
-    expect(ids([download({ status: 'paused' })])).toEqual(['resume', 'reveal', 'copy', 'cancel'])
+    expect(ids([download({ status: 'paused' })])).toEqual(['resume', 'reveal', 'cancel'])
   })
 
-  test('failed with saved data can be retried', () => {
-    expect(ids([download({ status: 'error', error: 'reset' })])).toEqual([
-      'retry',
-      'copy',
-      'remove'
-    ])
-  })
-
-  test('failed with a refused link can be fixed', () => {
-    const item = download({
-      status: 'error',
-      error: 'Server answered with status 403 for range request'
-    })
-    expect(failureAction(item as DownloadState)).toBe('fix')
-    expect(ids([item])).toEqual(['fix', 'copy', 'remove'])
-  })
-
-  test('failed with a range no longer satisfiable can be fixed', () => {
-    const item = download({
-      status: 'error',
-      error: 'Server answered with status 416 for range request'
-    })
-    expect(failureAction(item as DownloadState)).toBe('fix')
-    expect(ids([item])).toEqual(['fix', 'copy', 'remove'])
+  test('failed with its install kept can be retried, even with nothing fetched yet', () => {
+    expect(ids([download({ status: 'error', error: 'reset' })])).toEqual(['retry', 'remove'])
+    // Waiting on a login, with nothing fetched yet: it goes on rather than starting over.
+    const waited = download({ status: 'error', bytesDownloaded: 0 })
+    expect(failureAction(waited as DownloadState)).toBe('retry')
   })
 
   test('failed with nothing to resume starts over', () => {
-    expect(ids([download({ status: 'error', error: 'reset', resumable: false })])).toEqual([
-      'again',
-      'copy',
-      'remove'
-    ])
-    expect(ids([download({ status: 'error', error: 'reset', bytesDownloaded: 0 })])).toEqual([
-      'again',
-      'copy',
-      'remove'
-    ])
+    const item = download({ status: 'error', error: 'reset', resumable: false })
+    expect(failureAction(item as DownloadState)).toBe('again')
+    expect(ids([item])).toEqual(['again', 'remove'])
   })
 
   test('completed', () => {
-    expect(ids([download({ status: 'completed' })])).toEqual([
+    expect(ids([download({ status: 'completed' })])).toEqual(['open', 'reveal', 'remove', 'trash'])
+    expect(ids([finished()])).toEqual(['open', 'reveal', 'remove', 'trash'])
+  })
+
+  test('completed but moved: nothing that needs the install', () => {
+    expect(ids([finished({ missing: true })])).toEqual(['remove'])
+  })
+
+  test('installed into a folder that was already there: never trashed', () => {
+    expect(ids([download({ status: 'completed', adopted: true })])).toEqual([
       'open',
       'reveal',
-      'copy',
-      'remove',
-      'trash'
+      'remove'
     ])
-    expect(ids([finished()])).toEqual(['open', 'reveal', 'copy', 'remove', 'trash'])
-  })
-
-  test('completed but moved: nothing that needs the file', () => {
-    expect(ids([finished({ missing: true })])).toEqual(['copy', 'remove'])
-  })
-
-  test('a torrent from a .torrent file has no link to copy', () => {
-    const torrent = download({ status: 'paused', kind: 'torrent', url: '/tmp/a.torrent' })
-    expect(ids([torrent])).toEqual(['resume', 'reveal', 'cancel'])
   })
 })
 
@@ -128,20 +99,12 @@ test.describe('several selected', () => {
 
   test('single-download actions are not offered for several', () => {
     const items = [finished({ id: 'a' }), finished({ id: 'b' })]
-    expect(ids(items)).toEqual(['copy', 'remove', 'trash'])
+    expect(ids(items)).toEqual(['remove', 'trash'])
     const failed = [
-      download({
-        id: 'a',
-        status: 'error',
-        error: 'Server answered with status 403 for range request'
-      }),
-      download({
-        id: 'b',
-        status: 'error',
-        error: 'Server answered with status 403 for range request'
-      })
+      download({ id: 'a', status: 'error', error: 'reset', resumable: false }),
+      download({ id: 'b', status: 'error', error: 'reset', resumable: false })
     ]
-    expect(ids(failed)).toEqual(['copy', 'remove'])
+    expect(ids(failed)).toEqual(['remove'])
   })
 })
 
@@ -151,7 +114,6 @@ test.describe('the places that show them agree', () => {
       download({ status: 'downloading' }),
       download({ status: 'paused' }),
       download({ status: 'error', error: 'reset' }),
-      download({ status: 'error', error: 'Server answered with status 403 for range request' }),
       download({ status: 'error', error: 'reset', resumable: false }),
       finished()
     ]
@@ -167,7 +129,7 @@ test.describe('the places that show them agree', () => {
     }
   })
 
-  test('a finished download can be removed or have its file trashed, from its own screen too', () => {
+  test('a finished download can be removed or have its install trashed, from its own screen too', () => {
     expect(manageActions(finished())).toEqual(['remove', 'trash'])
     expect(manageActions(finished({ missing: true }))).toEqual(['remove'])
     expect(manageActions(download({ status: 'paused' }))).toEqual(['cancel'])
@@ -190,34 +152,29 @@ test.describe('the selection toolbar', () => {
   test('two buttons for every state, the rest behind More', () => {
     expect(shown([download({ status: 'downloading' })])).toEqual({
       buttons: ['pause', 'cancel'],
-      more: ['reveal', 'copy']
+      more: ['reveal']
     })
     expect(shown([download({ status: 'paused' })])).toEqual({
       buttons: ['resume', 'cancel'],
-      more: ['reveal', 'copy']
+      more: ['reveal']
     })
     expect(shown([download({ status: 'error', error: 'reset' })])).toEqual({
       buttons: ['retry', 'remove'],
-      more: ['copy']
+      more: []
     })
     expect(
       shown([download({ status: 'error', error: 'reset', resumable: false })]).buttons
     ).toEqual(['again', 'remove'])
-    expect(
-      shown([
-        download({ status: 'error', error: 'Server answered with status 403 for range request' })
-      ]).buttons
-    ).toEqual(['fix', 'remove'])
     expect(shown([finished()])).toEqual({
       buttons: ['open', 'reveal'],
-      more: ['copy', 'remove', 'trash']
+      more: ['remove', 'trash']
     })
   })
 
   test('several finished: remove and trash', () => {
     expect(shown([finished({ id: 'a' }), finished({ id: 'b' })])).toEqual({
       buttons: ['remove', 'trash'],
-      more: ['copy']
+      more: []
     })
   })
 

@@ -1,6 +1,5 @@
 import { stat, statfs } from 'node:fs/promises'
 import {
-  clipboard,
   dialog,
   ipcMain,
   nativeTheme,
@@ -17,13 +16,16 @@ import {
   type InitialState,
   type ThemeSource
 } from '../../shared/types'
+import type { SteamLoginRequest, SteamPrepareRequest } from '../../shared/steam'
+import type { StartSteamDownloadRequest } from '../../shared/types'
 import { DownloadManager } from '../download/downloadManager'
+import { MAX_STREAMS_PER_NETWORK } from '../download/plan'
+import { canRemember } from '../steam/account'
+import { redactedMessage } from '../steam/redact'
+import { clientInstalledApps, findLibraryFolders } from '../steam/steamFolders'
 import { getDefaultDownloadsDir, getHomeDir } from '../download/paths'
 import { listHistory } from '../download/history'
-import { probeUrl } from '../download/probe'
-import { onMagnetCheckStatus } from '../download/torrent/metadata'
 import { deviceBindingSupported } from '../network/deviceBinding'
-import { pendingLink, pendingLinks, releaseLink } from '../openLinks'
 import { NetworkMonitor } from '../network/interfaces'
 import { loadSettings, saveSettings } from '../settings'
 import { showUpdateMenu, updateState } from '../updater'
@@ -44,7 +46,7 @@ async function openNetworkSettings(): Promise<void> {
 }
 
 /** Typed wrapper around ipcMain.handle — the channel name picks its args/result shape out of
- * IpcContract, so a handler here that doesn't match what plexoApi (preload) actually calls is a
+ * IpcContract, so a handler here that doesn't match what netfuseApi (preload) actually calls is a
  * compile error instead of a silent runtime mismatch. */
 function handle<K extends keyof IpcContract>(
   channel: K,
@@ -60,6 +62,93 @@ function handle<K extends keyof IpcContract>(
 }
 
 const DESTINATION_CHECK_MS = 300
+
+// The window's Steam requests, checked here as they arrive: the types say what the window means
+// to send, not what reaches this process.
+
+const isText = (value: unknown, max: number): value is string =>
+  typeof value === 'string' && value.length > 0 && value.length <= max
+
+const isId = (value: unknown): value is number =>
+  Number.isSafeInteger(value) && (value as number) > 0
+
+function checkLoginRequest(value: unknown): SteamLoginRequest {
+  const request = value as Partial<
+    Record<keyof SteamLoginRequest | 'accountName' | 'password', unknown>
+  > | null
+  if (typeof request?.remember === 'boolean') {
+    if (request.method === 'qr') return { method: 'qr', remember: request.remember }
+    if (
+      request.method === 'credentials' &&
+      isText(request.accountName, 64) &&
+      isText(request.password, 256)
+    ) {
+      return {
+        method: 'credentials',
+        accountName: request.accountName,
+        password: request.password,
+        remember: request.remember
+      }
+    }
+  }
+  throw new Error('Enter your Steam account name and password.')
+}
+
+function checkPrepareRequest(value: unknown): SteamPrepareRequest {
+  const request = value as Partial<Record<keyof SteamPrepareRequest, unknown>> | null
+  if (
+    isId(request?.appId) &&
+    isText(request.branch, 128) &&
+    Array.isArray(request.depotIds) &&
+    request.depotIds.every(isId) &&
+    isText(request.destinationDir, 4096) &&
+    typeof request.adopt === 'boolean'
+  ) {
+    return {
+      appId: request.appId,
+      branch: request.branch,
+      depotIds: request.depotIds,
+      destinationDir: request.destinationDir,
+      adopt: request.adopt
+    }
+  }
+  throw new Error('Choose what to download again.')
+}
+
+function checkSteamStart(value: unknown): StartSteamDownloadRequest {
+  const { kind, planId, interfaceIds, streamsPerNetwork } = (value ?? {}) as Partial<
+    Record<keyof StartSteamDownloadRequest, unknown>
+  >
+  if (
+    kind === 'steam' &&
+    isText(planId, 64) &&
+    Array.isArray(interfaceIds) &&
+    interfaceIds.length <= 64 &&
+    interfaceIds.every((id) => isText(id, 256)) &&
+    (streamsPerNetwork === undefined ||
+      (Number.isInteger(streamsPerNetwork) &&
+        (streamsPerNetwork as number) >= 1 &&
+        (streamsPerNetwork as number) <= MAX_STREAMS_PER_NETWORK))
+  ) {
+    return {
+      kind: 'steam',
+      planId,
+      interfaceIds,
+      streamsPerNetwork: streamsPerNetwork as number | undefined
+    }
+  }
+  throw new Error('Choose what to download again.')
+}
+
+/** Steam's errors and the libraries' can carry a token or a request code: never passed on as
+ * they are. */
+async function redacting<T>(work: () => Promise<T>): Promise<T> {
+  try {
+    return await work()
+  } catch (error) {
+    throw new Error(redactedMessage(error))
+  }
+}
 
 async function freeSpace(dir: string): Promise<number | null> {
   try {
@@ -138,7 +227,7 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
         destinationDir: destinationExists ? destinationDir : undefined
       } satisfies InitialState
     } catch (error) {
-      console.error('[plexo] failed to read initial state', error)
+      console.error('[netfuse] failed to read initial state', error)
       // No getPath() here — it may be what threw. An empty destination just keeps Start disabled.
       event.returnValue = {
         homeDir: '',
@@ -157,13 +246,6 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
     await openNetworkSettings()
   })
 
-  handle('probeUrl', async (_event, url) => probeUrl(url))
-  onMagnetCheckStatus((status) => {
-    const window = getWindow()
-    if (window && !window.isDestroyed())
-      window.webContents.send(IpcChannels.magnetCheckStatus, status)
-  })
-
   handle('chooseDestinationFolder', async (_event, defaultPath) => {
     const window = getWindow()
     if (!window) return null
@@ -175,44 +257,13 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
     return result.filePaths[0]
   })
 
-  handle('chooseTorrentFile', async () => {
-    const window = getWindow()
-    if (!window) return null
-    const result = await dialog.showOpenDialog(window, {
-      properties: ['openFile'],
-      filters: [{ name: 'Torrent', extensions: ['torrent'] }]
-    })
-    if (result.canceled || result.filePaths.length === 0) return null
-    return result.filePaths[0]
-  })
-
-  handle('pendingLinks', async () => pendingLinks())
-  handle('resumeFromLink', async (_event, linkId, downloadId) => {
-    const link = pendingLink(linkId)
-    if (link?.probe?.kind !== 'http') throw new Error('That download is no longer waiting.')
-    await manager.relink(downloadId, link.probe.finalUrl, {
-      probe: link.probe,
-      browser: link.browser
-    })
-    releaseLink(linkId)
-  })
-  handle('dismissLink', async (_event, id) => releaseLink(id))
-
-  handle('readClipboardText', async () => clipboard.readText())
-
   handle('revealDownload', async (_event, id) => manager.reveal(id))
 
   handle('openDownload', async (_event, id) => manager.open(id))
 
-  // The browser's sign-in is attached here, so it never passes through the window.
-  handle('startDownload', async (_event, request, linkId) => {
-    const browser = linkId === undefined ? undefined : pendingLink(linkId)?.browser
-    const id = await manager.start(
-      browser && request.kind === 'http' ? { ...request, browser } : request
-    )
-    if (linkId !== undefined) releaseLink(linkId)
-    return id
-  })
+  handle('startDownload', async (_event, request) =>
+    redacting(() => manager.start(checkSteamStart(request)))
+  )
 
   handle('listDownloads', async () => manager.listDownloads())
 
@@ -225,11 +276,6 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
 
   handle('freeSpace', async (_event, dir) => freeSpace(dir))
 
-  handle('torrentFiles', async (_event, id) => manager.torrentFiles(id))
-  handle('chooseTorrentFiles', async (_event, id, selected) =>
-    manager.chooseTorrentFiles(id, selected)
-  )
-
   handle('pauseDownload', async (_event, id) => {
     await manager.pause(id)
   })
@@ -237,8 +283,6 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
   handle('resumeDownload', async (_event, id) => {
     manager.resume(id)
   })
-
-  handle('relinkDownload', async (_event, id, url) => manager.relink(id, url))
 
   handle('setDownloadNetwork', async (_event, id, networkId, enabled) => {
     await manager.setNetworkEnabled(id, networkId, enabled)
@@ -252,6 +296,41 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
 
   handle('updateState', () => updateState())
   handle('showUpdateMenu', () => showUpdateMenu())
+
+  const { account, library, planner } = manager.steam
+  handle('steamLoginState', async () => {
+    // The first time the window asks, a remembered login is used; the state changes are sent.
+    void account.start()
+    await account.lookedForStoredLogin()
+    const state = account.loginState
+    return state.status === 'logged-out' ? { ...state, canRemember: canRemember() } : state
+  })
+  handle('steamLogin', async (_event, request) => account.login(checkLoginRequest(request)))
+  handle('steamSubmitCode', async (_event, code) => {
+    if (!isText(code, 16) || !/^[A-Za-z0-9]+$/.test(code.trim())) {
+      throw new Error('Enter the code as Steam shows it.')
+    }
+    await account.submitCode(code.trim().toUpperCase())
+  })
+  handle('steamCancelLogin', async () => account.cancel())
+  handle('steamLogout', async () => account.logout())
+  handle('steamOwnedApps', async (_event, refresh) =>
+    redacting(() => library.ownedApps(refresh === true))
+  )
+  handle('steamAppDetails', async (_event, appId) => {
+    if (!isId(appId)) throw new Error('Choose a game from your library.')
+    return redacting(() => library.appDetails(appId))
+  })
+  handle('steamPrepare', async (_event, request) =>
+    redacting(() => planner.prepare(checkPrepareRequest(request)))
+  )
+  handle('steamLibraryFolders', async (_event, installDir) => {
+    if (installDir !== undefined && !isText(installDir, 255)) {
+      throw new Error('Choose a game from your library.')
+    }
+    return findLibraryFolders(installDir)
+  })
+  handle('steamClientApps', async () => clientInstalledApps())
 
   return manager
 }

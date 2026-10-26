@@ -4,26 +4,26 @@ import { copyFileSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 
 const builds = (version: string): string[] => [
-  `plexo-${version}-arm64.AppImage`,
-  `plexo-${version}-arm64.dmg`,
-  `plexo-${version}-setup.exe`,
-  `plexo-${version}-x64.dmg`,
-  `plexo-${version}-x86_64.AppImage`,
-  `plexo-${version}.aarch64.rpm`,
-  `plexo-${version}.x86_64.rpm`,
-  `plexo-${version}-arm64.tar.gz`,
-  `plexo-${version}-x64.tar.gz`,
-  `plexo_${version}_amd64.deb`,
-  `plexo_${version}_arm64.deb`
+  `netfuse-${version}-arm64.AppImage`,
+  `netfuse-${version}-arm64.dmg`,
+  `netfuse-${version}-setup.exe`,
+  `netfuse-${version}-x64.dmg`,
+  `netfuse-${version}-x86_64.AppImage`,
+  `netfuse-${version}.aarch64.rpm`,
+  `netfuse-${version}.x86_64.rpm`,
+  `netfuse-${version}-arm64.tar.gz`,
+  `netfuse-${version}-x64.tar.gz`,
+  `netfuse_${version}_amd64.deb`,
+  `netfuse_${version}_arm64.deb`
 ]
 
 /** What the app's updater reads besides the downloads (see src/main/updater.ts); the release
  * notes never list them. */
 const updateFiles = (version: string): string[] => [
-  `plexo-${version}-arm64-mac.zip`,
-  `plexo-${version}-x64-mac.zip`,
-  `plexo-${version}-arm64-mac.zip.blockmap`,
-  `plexo-${version}-setup.exe.blockmap`
+  `netfuse-${version}-arm64-mac.zip`,
+  `netfuse-${version}-x64-mac.zip`,
+  `netfuse-${version}-arm64-mac.zip.blockmap`,
+  `netfuse-${version}-setup.exe.blockmap`
 ]
 const channelFiles = ['latest.yml', 'latest-mac.yml', 'latest-linux.yml']
 
@@ -34,21 +34,21 @@ function writeChannelFiles(root: string, version: string, names = channelFiles):
   }
 }
 
-/** A changelog with one entry for each of `versions`, in docs/changelog.js's shape. */
+/** A changelog with one entry for each of `versions`, in scripts/changelog.cjs's shape. */
 function writeChangelog(root: string, versions: string[]): void {
   const entries = versions.map((version) => ({
     version: `v${version}`,
     items: [{ kind: 'fixed', title: 'Fixes', text: `What changed in ${version}.` }]
   }))
   writeFileSync(
-    join(root, 'docs/changelog.js'),
-    `module.exports.PlexoChangelog = ${JSON.stringify(entries)}\n`
+    join(root, 'scripts/changelog.cjs'),
+    `module.exports.NetFuseChangelog = ${JSON.stringify(entries)}\n`
   )
 }
 
 function prepareRelease(root: string, files: string[]): string {
-  for (const dir of ['scripts', 'docs', 'dist']) mkdirSync(join(root, dir), { recursive: true })
-  for (const file of ['scripts/release-notes.mjs', 'docs/downloads.js']) {
+  for (const dir of ['scripts', 'dist']) mkdirSync(join(root, dir), { recursive: true })
+  for (const file of ['scripts/release-notes.mjs', 'scripts/downloads.cjs']) {
     copyFileSync(resolve(__dirname, '..', file), join(root, file))
   }
   writeChangelog(root, ['1.0.0-rc.1', '1.0.0', '1.0.0-rc.11+build.1'])
@@ -69,7 +69,7 @@ test.describe('release artifact selection @smoke', () => {
       const otherBuilds = ['1.0.0-rc.10', '1.0.0-rc.11', '1.0.0', '11.0.0']
         .filter((other) => other !== version)
         .flatMap((other) => [...builds(other), ...updateFiles(other)])
-      const noise = [`plexo_${version}_amd64.snap`]
+      const noise = [`netfuse_${version}_amd64.snap`]
       const script = prepareRelease(root, [
         ...expected,
         ...updateFiles(version),
@@ -93,7 +93,7 @@ test.describe('release artifact selection @smoke', () => {
         `## What's new\n\n- **Fixed: Fixes.** What changed in ${version}.\n\n## Downloads`
       )
       for (const file of expected) {
-        const url = `https://github.com/anmolkapil/plexo/releases/download/v${version}/${file}`
+        const url = `https://github.com/MerikhSS/plexo_steam-/releases/download/v${version}/${file}`
         expect(notes.stdout.split(url + ')')).toHaveLength(2)
       }
       for (const file of [...otherBuilds, ...noise, ...updateFiles(version), ...channelFiles]) {
@@ -114,7 +114,7 @@ test.describe('release artifact selection @smoke', () => {
       expect(result).toMatchObject({
         status: 1,
         stdout: '',
-        stderr: expect.stringContaining('No v1.0.0-rc.2 entry in docs/changelog.js')
+        stderr: expect.stringContaining('No v1.0.0-rc.2 entry in scripts/changelog.cjs')
       })
     }
   })

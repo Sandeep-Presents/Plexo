@@ -1,5 +1,5 @@
 import type { DownloadState, FinishedDownload } from '@shared/types'
-import { ChevronRight, Plus, X } from 'lucide-react'
+import { ChevronRight, X } from 'lucide-react'
 import { cn } from 'cn'
 import { Fragment, memo, useCallback, useEffect, useState } from 'react'
 import { DownloadContextMenu } from '../components/DownloadContextMenu'
@@ -7,29 +7,17 @@ import { useDownloadActions, useDownloadActionsState } from '../components/downl
 import { ACTION_META, toolbarLabel } from '../components/downloadActionMeta'
 import { MoreActionsMenu } from '../components/MoreActionsMenu'
 import { DownloadFilterMenu } from '../components/DownloadFilterMenu'
+import { GameCapsule } from '../components/GameArt'
 import { CombineDiagram } from '../components/CombineDiagram'
-import { LimitsDialog } from '../components/LimitsDialog'
-import { ScheduleIndicator } from '../components/ScheduleIndicator'
 import { networkStatusText } from '../components/NetworkRow'
 import { scheduleMessage, scheduleWindow } from '@shared/downloadSchedule'
-import { NetworksMenu } from '../components/NetworksMenu'
-import { TorrentBadge } from '../components/TorrentBadge'
+import { SteamBadge } from '../components/SteamBadge'
 import { Button } from '../components/ui/button'
 import { Checkbox } from '../components/ui/checkbox'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../components/ui/tooltip'
 import { useNetworkVisuals, type ResolveNetworkVisual } from '../hooks/useNetworkVisuals'
 import { useAppStore, type DownloadFilter } from '../store/useAppStore'
-import {
-  describeError,
-  fileExtensionBadge,
-  formatBytes,
-  formatEta,
-  formatPercent,
-  formatWhen,
-  isFolder,
-  sourceOf,
-  wantedBytes
-} from '../utils/format'
+import { describeError, formatBytes, formatEta, formatPercent, formatWhen } from '../utils/format'
 import { useFormatSpeed } from '../hooks/useFormatSpeed'
 import {
   availableActions,
@@ -89,15 +77,11 @@ export function DownloadsScreen(): React.JSX.Element {
   const downloadsById = useAppStore((store) => store.downloads)
   const history = useAppStore((store) => store.history)
   const setView = useAppStore((store) => store.setView)
-  const openNewDownload = useAppStore((store) => store.openNewDownload)
   const filter = useAppStore((store) => store.downloadFilter)
   const setFilter = useAppStore((store) => store.setDownloadFilter)
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const { perform, askClearFinished } = useDownloadActions()
   const { busy } = useDownloadActionsState()
-  const [limitsOpen, setLimitsOpen] = useState(false)
-  const [showSchedule, setShowSchedule] = useState(false)
-  const [limitsPage, setLimitsPage] = useState<string | null>(null)
   const [now, setNow] = useState(() => Date.now())
 
   useEffect(() => {
@@ -152,7 +136,7 @@ export function DownloadsScreen(): React.JSX.Element {
         document.querySelector('[role="dialog"], [role="alertdialog"], [role="menu"]')
       )
         return
-      const command = window.plexo.platform === 'darwin' ? event.metaKey : event.ctrlKey
+      const command = window.netfuse.platform === 'darwin' ? event.metaKey : event.ctrlKey
       if (event.key === 'Escape') setSelected(new Set())
       else if (command && event.key.toLowerCase() === 'a') {
         event.preventDefault()
@@ -175,12 +159,6 @@ export function DownloadsScreen(): React.JSX.Element {
   // the rest of what the menu does for the selection behind More, so six never need more room.
   const { buttons: toolbarButtons, more: moreActions } = splitToolbar(availableActions(chosen))
 
-  const openSchedule = (): void => {
-    setLimitsPage(null)
-    setShowSchedule(true)
-    setLimitsOpen(true)
-  }
-
   return (
     <div className="flex h-full flex-col bg-background">
       {chosen.length === 0 ? (
@@ -200,18 +178,6 @@ export function DownloadsScreen(): React.JSX.Element {
             </div>
           )}
           <div className="flex-1" />
-          <ScheduleIndicator onClick={openSchedule} />
-          <NetworksMenu
-            onOpenLimits={(page) => {
-              setShowSchedule(false)
-              setLimitsPage(page)
-              setLimitsOpen(true)
-            }}
-          />
-          <Button type="button" onClick={() => openNewDownload()}>
-            <Plus data-icon="inline-start" />
-            New download
-          </Button>
         </div>
       ) : (
         <div
@@ -265,7 +231,6 @@ export function DownloadsScreen(): React.JSX.Element {
             ))}
             <MoreActionsMenu groups={moreActions} disabled={busy} />
           </div>
-          <ScheduleIndicator onClick={openSchedule} />
         </div>
       )}
 
@@ -339,14 +304,6 @@ export function DownloadsScreen(): React.JSX.Element {
           )
         })}
       </div>
-
-      <LimitsDialog
-        open={limitsOpen}
-        showSchedule={showSchedule}
-        onOpenChange={setLimitsOpen}
-        page={limitsPage}
-        onPageChange={setLimitsPage}
-      />
     </div>
   )
 }
@@ -358,8 +315,6 @@ const PLACEHOLDER_NETWORKS = [
   { solid: 'var(--icon-muted)', label: 'USB' },
   { solid: 'var(--icon-muted)', label: 'Ethernet' }
 ]
-const PASTE_SHORTCUT = window.plexo.platform === 'darwin' ? '⌘V' : 'Ctrl+V'
-const NEW_SHORTCUT = window.plexo.platform === 'darwin' ? '⌘N' : 'Ctrl+N'
 
 /** Nothing listed yet: how to start one — or, with no network connected, how to get one. */
 function EmptyState(): React.JSX.Element {
@@ -367,7 +322,7 @@ function EmptyState(): React.JSX.Element {
     (store) => store.interfacesStatus === 'ready' && store.interfaces.length === 0
   )
   const loadInterfaces = useAppStore((store) => store.loadInterfaces)
-  const openNewDownload = useAppStore((store) => store.openNewDownload)
+  const setView = useAppStore((store) => store.setView)
 
   return (
     <div className="flex flex-col items-center gap-4 px-5 pt-16 pb-10 text-center">
@@ -376,7 +331,7 @@ function EmptyState(): React.JSX.Element {
         <>
           <div className="font-sans text-[16px] leading-[1.2] font-bold">No networks connected</div>
           <div className="max-w-[380px] text-[12.5px] leading-[1.6] text-[var(--text-secondary)]">
-            Plexo needs at least one active network. Join a Wi-Fi network, plug in Ethernet, or
+            NetFuse needs at least one active network. Join a Wi-Fi network, plug in Ethernet, or
             connect your phone using USB tethering.
           </div>
           <div className="mt-1 flex gap-2">
@@ -386,7 +341,7 @@ function EmptyState(): React.JSX.Element {
             <Button
               type="button"
               variant="secondary"
-              onClick={() => window.plexo.openNetworkSettings()}
+              onClick={() => window.netfuse.openNetworkSettings()}
             >
               Network settings
             </Button>
@@ -396,12 +351,10 @@ function EmptyState(): React.JSX.Element {
         <>
           <div className="font-sans text-[16px] leading-[1.2] font-bold">No downloads yet</div>
           <div className="max-w-[380px] text-[12.5px] leading-[1.6] text-[var(--text-secondary)]">
-            Paste a link ({PASTE_SHORTCUT}) or drop a .torrent anywhere in this window.
+            Pick a game from your library to install it over every network at once.
           </div>
-          <Button type="button" className="mt-1" onClick={() => openNewDownload()}>
-            <Plus data-icon="inline-start" />
-            New download
-            <span className="ml-1 font-mono text-[11px] opacity-70">{NEW_SHORTCUT}</span>
+          <Button type="button" className="mt-1" onClick={() => setView({ name: 'library' })}>
+            Go to library
           </Button>
         </>
       )}
@@ -447,8 +400,7 @@ const DownloadRow = memo(function DownloadRow({
   const schedule = useAppStore((store) => store.downloadSchedule)
   const [working, setWorking] = useState(false)
   const finished = isFinished(item) || item.status === 'completed'
-  const badge = isFolder(item) ? 'DIR' : fileExtensionBadge(item.fileName)
-  const wanted = wantedBytes(item)
+  const wanted = item.totalBytes
   const percent = formatPercent(item.bytesDownloaded, wanted)
 
   let detail: string
@@ -456,8 +408,6 @@ const DownloadRow = memo(function DownloadRow({
   if (isFinished(item) || item.status === 'completed') {
     detail = [
       formatBytes(wanted || item.bytesDownloaded),
-      // A torrent's badge already says where it came from.
-      item.kind === 'http' && sourceOf(item.url),
       isFinished(item) && item.missing
         ? 'moved or deleted'
         : formatWhen(item.completedAt ?? now, now)
@@ -533,7 +483,7 @@ const DownloadRow = memo(function DownloadRow({
             state: !network.enabled
               ? 'Off'
               : network.status !== 'on'
-                ? networkStatusText(network.status, network.transfer)
+                ? networkStatusText(network.status)
                 : item.status === 'downloading'
                   ? formatSpeed(network.speedBytesPerSec)
                   : 'On'
@@ -565,15 +515,15 @@ const DownloadRow = memo(function DownloadRow({
         onClick={() => onOpen(item.id)}
         className="flex min-w-0 flex-1 items-center gap-3 rounded-md text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
-        <div className="flex size-10 shrink-0 items-center justify-center rounded-lg border-[0.5px] border-border bg-card font-mono text-[10px] font-semibold text-muted-foreground">
-          {badge}
+        <div className="h-12 w-8 shrink-0 overflow-hidden rounded-md ring-1 ring-foreground/10">
+          <GameCapsule appId={item.app.appId} name={item.fileName} small />
         </div>
         <div className="flex min-w-0 flex-1 flex-col gap-1.5">
           <div className="flex min-w-0 items-center gap-2">
             <span className="truncate font-sans text-[14px] leading-tight font-medium">
               {item.fileName}
             </span>
-            {item.kind === 'torrent' && <TorrentBadge />}
+            <SteamBadge />
             {(dots || speed) && (
               <div className="ml-auto flex shrink-0 items-center gap-2.5 pl-2">
                 {dots && (

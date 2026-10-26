@@ -81,14 +81,15 @@ function RemoveDialogBody({
   let destructive = true
   if (mode === 'cancel') {
     title = one ? 'Cancel download?' : `Cancel ${count} downloads?`
-    description = 'The part already downloaded will be deleted.'
+    description = 'What it installed so far will be deleted. Anything else in its folder stays.'
     confirm = one ? 'Cancel download' : 'Cancel downloads'
     dismiss = 'Keep'
   } else if (mode === 'trash') {
-    // Said as what it comes to: the file is deleted, into the Trash.
-    title = one ? 'Delete file?' : `Delete ${count} files?`
-    description = `The ${one ? 'file' : 'files'} will be moved to the ${TRASH_NAME}.`
-    confirm = one ? 'Delete file' : 'Delete files'
+    // Said as what it comes to: a game goes as uninstalling it would, its whole folder into the
+    // Trash, saves and all.
+    title = one ? 'Delete game?' : `Delete ${count} games?`
+    description = `The install ${one ? 'folder' : 'folders'} will be moved to the ${TRASH_NAME}, with anything the game saved there.`
+    confirm = one ? 'Delete game' : 'Delete games'
   } else {
     title = clearAll
       ? 'Clear finished list?'
@@ -96,10 +97,10 @@ function RemoveDialogBody({
         ? 'Remove from list?'
         : `Remove ${count} downloads from list?`
     description = !anyFailed
-      ? `The downloaded ${one && !clearAll ? 'file stays' : 'files stay'} on your computer.`
+      ? `The installed ${one && !clearAll ? 'game stays' : 'games stay'} on your computer.`
       : anyFinished
-        ? 'Finished files stay on your computer. Failed downloads lose the part they already downloaded.'
-        : 'The part already downloaded will be deleted.'
+        ? 'Finished games stay installed. Failed downloads lose what they installed so far.'
+        : 'What it installed so far will be deleted. Anything else in its folder stays.'
     confirm = clearAll ? 'Clear list' : 'Remove'
     // Only the list changes, unless a failed one's partial data goes with it.
     destructive = anyFailed

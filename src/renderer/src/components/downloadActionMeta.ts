@@ -1,5 +1,4 @@
 import {
-  Copy,
   Download,
   ExternalLink,
   FolderOpen,
@@ -8,14 +7,13 @@ import {
   Play,
   RotateCw,
   Trash2,
-  Wrench,
   X,
   type LucideIcon
 } from 'lucide-react'
 import type { ActionId, DownloadItem } from '../utils/downloadActions'
 
-const MAC = window.plexo.platform === 'darwin'
-export const TRASH_NAME = window.plexo.platform === 'win32' ? 'Recycle Bin' : 'Trash'
+const MAC = window.netfuse.platform === 'darwin'
+export const TRASH_NAME = window.netfuse.platform === 'win32' ? 'Recycle Bin' : 'Trash'
 const REVEAL_LABEL = MAC ? 'Show in Finder' : 'Show in folder'
 
 const SOMETHING_WRONG = 'Something went wrong'
@@ -62,13 +60,6 @@ export const ACTION_META: Record<ActionId, ActionMeta> = {
     failure: 'Couldn’t retry',
     icon: RotateCw
   },
-  fix: {
-    label: 'Fix link',
-    toolbar: 'Fix link',
-    single: true,
-    failure: SOMETHING_WRONG,
-    icon: Wrench
-  },
   again: {
     label: 'Download again',
     toolbar: 'Download again',
@@ -80,21 +71,15 @@ export const ACTION_META: Record<ActionId, ActionMeta> = {
     label: 'Open',
     toolbar: 'Open',
     single: true,
-    failure: 'Couldn’t open file',
+    failure: 'Couldn’t open the game',
     icon: ExternalLink
   },
   reveal: {
     label: REVEAL_LABEL,
     toolbar: REVEAL_LABEL,
     single: true,
-    failure: 'Couldn’t show file',
+    failure: 'Couldn’t show the install folder',
     icon: FolderOpen
-  },
-  copy: {
-    label: 'Copy link',
-    many: (n) => `Copy ${n} links`,
-    failure: 'Couldn’t copy link',
-    icon: Copy
   },
   cancel: {
     label: 'Cancel download',
@@ -112,8 +97,8 @@ export const ACTION_META: Record<ActionId, ActionMeta> = {
     icon: ListX
   },
   trash: {
-    label: `Move file to ${TRASH_NAME}`,
-    many: (n) => `Move ${n} files to ${TRASH_NAME}`,
+    label: `Move install to ${TRASH_NAME}`,
+    many: (n) => `Move ${n} installs to ${TRASH_NAME}`,
     toolbar: `Move to ${TRASH_NAME}`,
     failure: SOMETHING_WRONG,
     icon: Trash2,
@@ -124,8 +109,6 @@ export const ACTION_META: Record<ActionId, ActionMeta> = {
 /** The name in a menu: spelled out for several ("Pause 3 downloads"). */
 export function menuLabel(id: ActionId, items: DownloadItem[]): string {
   const meta = ACTION_META[id]
-  if (id === 'copy' && items.every((item) => item.url.startsWith('magnet:')))
-    return items.length > 1 ? `Copy ${items.length} magnet links` : 'Copy magnet link'
   return items.length > 1 && meta.many ? meta.many(items.length) : meta.label
 }
 

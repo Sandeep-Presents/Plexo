@@ -2,17 +2,17 @@
 
 ## Reporting a vulnerability
 
-Please don't open a public issue for a security problem. Report it privately through GitHub instead: open the [Security tab](https://github.com/anmolkapil/plexo/security) and click **Report a vulnerability**. Only the maintainer can see the report.
+Please don't open a public issue for a security problem. Report it privately through GitHub instead: open the [Security tab](https://github.com/MerikhSS/plexo_steam-/security) and click **Report a vulnerability**. Only the maintainer can see the report.
 
 A useful report includes:
 
-- what an attacker can do, and what they need first (a crafted link or file, a malicious website, code already running on the computer)
-- the steps or a small test that shows it, and the Plexo version and operating system
+- what an attacker can do, and what they need first (a crafted manifest or content server, code already running on the computer)
+- the steps or a small test that shows it, and the NetFuse version and operating system
 - a suggested fix, if you have one
 
 ## What to expect
 
-Plexo is maintained by one person, so these are aims rather than promises:
+NetFuse is maintained by one person, so these are aims rather than promises:
 
 - a reply within a week
 - an assessment, and a planned fix or an explanation, within a few weeks
@@ -22,18 +22,18 @@ The advisory is published once the fix has been released, with credit to you unl
 
 ## Supported versions
 
-Only the latest release gets security fixes. Plexo updates itself, so most people are already on it.
+Only the latest release gets security fixes. NetFuse updates itself, so most people are already on it.
 
 ## Scope
 
 In scope:
 
-- the Plexo app for macOS, Windows, and Linux, including its download, torrent, and update code
-- the browser extension in `extension/`
+- the NetFuse app for macOS, Windows, and Linux, including its Steam login, download and update code
+- how it keeps the Steam login (the refresh token, sealed with the system keychain) and anything that could leak it, a password or a Steam Guard code
 - the release workflows and build setup in this repository
 
 Out of scope:
 
-- the getplexo.app landing page, unless the problem affects people downloading Plexo
-- problems in a dependency that Plexo doesn't expose (please report those upstream)
-- a malicious server sending the wrong content for a link you chose to download, unless Plexo makes it worse (for example, by writing outside the folder you picked)
+- problems in a dependency that NetFuse doesn't expose (please report those upstream)
+- problems in Steam itself, which go to Valve
+- a content server sending the wrong bytes, unless NetFuse makes it worse (every chunk is checked against its manifest before it is written, so writing a damaged one, or writing outside the install folder, is in scope)

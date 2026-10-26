@@ -1,26 +1,43 @@
 import { expect, test } from '@playwright/test'
-import type { HttpDownloadState } from '../src/shared/types'
+import type { SteamDownloadState } from '../src/shared/types'
 import { checkEvents } from './fixtures'
 
-const paused = (): HttpDownloadState => ({
-  kind: 'http',
+const paused = (): SteamDownloadState => ({
+  kind: 'steam',
   id: 'invariant-download',
-  url: 'http://example.test/file',
-  fileName: 'file',
-  destinationPath: '/tmp/file',
+  url: 'steam://app/4000',
+  fileName: 'Game',
+  destinationPath: '/tmp/Game',
   totalBytes: 100,
   bytesDownloaded: 100,
   speedBytesPerSec: 0,
   status: 'paused',
-  networks: [],
+  networks: [
+    {
+      transfer: 'steam',
+      id: 'a',
+      label: 'a',
+      kind: 'ethernet',
+      enabled: true,
+      status: 'on',
+      bytesDownloaded: 100,
+      speedBytesPerSec: 0,
+      retries: 0
+    }
+  ],
   streams: [],
   peakStreams: 0,
-  totalBlocks: 1,
-  blockSizeBytes: 100,
+  totalCells: 1,
+  totalChunks: 1,
+  chunksDone: 1,
+  app: { appId: 4000, name: 'Game', branch: 'public' },
+  depots: [],
+  fileCount: 1,
+  installBytes: 100,
   startedAt: 0,
-  blocks: [
+  cells: [
     {
-      kind: 'http',
+      kind: 'steam',
       index: 0,
       rangeStart: 0,
       rangeEnd: 99,
@@ -38,29 +55,30 @@ test('event validation retains integrity failures and download context', () => {
   ).not.toThrow()
 
   const corrupt = paused()
-  corrupt.blocks[0].bytesByInterface.a = 99
-  expect(() => checkEvents([[corrupt]])).toThrow(/invariant-download.*unit 0 attribution/)
+  corrupt.cells[0].bytesByInterface.a = 99
+  expect(() => checkEvents([[corrupt]])).toThrow(/invariant-download.*cell 0 attribution/)
 
   const short = paused()
-  short.blocks[0].bytesDownloaded = 99
-  short.blocks[0].bytesByInterface.a = 99
-  expect(() => checkEvents([[short]])).toThrow(/invariant-download.*completed unit 0 is full/)
+  short.cells[0].bytesDownloaded = 99
+  short.cells[0].bytesByInterface.a = 99
+  expect(() => checkEvents([[short]])).toThrow(/invariant-download.*completed cell 0 is full/)
 
   expect(() => checkEvents([[{ ...valid, status: 'completed' }, valid]])).toThrow(
     /completed → paused/
   )
 })
 
-test('event validation checks long histories without per-block report steps', () => {
+test('event validation checks long histories without per-cell report steps', () => {
   const state = paused()
-  state.blocks = Array.from({ length: 256 }, (_, index) => ({
-    ...state.blocks[0],
+  state.cells = Array.from({ length: 256 }, (_, index) => ({
+    ...state.cells[0],
     index,
     rangeStart: index * 100,
     rangeEnd: index * 100 + 99
   }))
-  state.totalBlocks = state.blocks.length
-  state.totalBytes = state.bytesDownloaded = state.totalBlocks * 100
+  state.totalCells = state.totalChunks = state.chunksDone = state.cells.length
+  state.totalBytes = state.bytesDownloaded = state.totalCells * 100
+  state.networks[0].bytesDownloaded = state.totalBytes
   const history = Array.from({ length: 1000 }, () => state)
   expect(() => checkEvents([history])).not.toThrow()
   // A failure at the end must still be inspected, rather than sampling a large history.

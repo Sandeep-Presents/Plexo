@@ -361,7 +361,7 @@ function NetworkPage({
     setError(null)
     try {
       if (reset === 'usage') {
-        await window.plexo.resetNetworkUsage(id)
+        await window.netfuse.resetNetworkUsage(id)
         onUsageReset()
       } else change({ speedLimit: undefined, dataLimit: undefined })
       setReset(null)
@@ -382,7 +382,7 @@ function NetworkPage({
       <div className="flex flex-col gap-1 pb-3">
         <h3 className="font-sans text-[18px] leading-none font-semibold">{name}</h3>
         <div className="font-mono text-[12px] text-muted-foreground">
-          {formatBytes(used)} used by Plexo {dataUsageLabel(period)}
+          {formatBytes(used)} used by NetFuse {dataUsageLabel(period)}
         </div>
       </div>
 
@@ -510,7 +510,7 @@ function UsageBar({
   period?: DataLimitPeriod
 }): React.JSX.Element {
   const reached = used >= limit
-  const color = reached ? 'var(--color-danger)' : 'var(--color-wifi)'
+  const color = reached ? 'var(--color-danger)' : 'var(--text)'
   return (
     <div className="flex items-center gap-3">
       <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted">
@@ -653,7 +653,7 @@ function LimitsEditor({
       }
     }
     try {
-      await window.plexo.updateSettings(patch)
+      await window.netfuse.updateSettings(patch)
       useAppStore.setState(patch)
       onClose()
     } catch (cause) {

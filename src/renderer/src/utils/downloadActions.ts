@@ -1,22 +1,11 @@
 import type { DownloadState, FinishedDownload } from '@shared/types'
-import { linkExpired } from './format'
 
 /** Everything the app can do to a download, decided in one place. The row's button, the
  * right-click menu, the selection toolbar and a download's own screen all read this list, so
  * they can't disagree about what is offered, when, or in what order. How an action is named,
  * drawn and confirmed is in components/downloadActionMeta.ts and DownloadActionsProvider.tsx. */
 export type ActionId =
-  | 'pause'
-  | 'resume'
-  | 'retry'
-  | 'fix'
-  | 'again'
-  | 'open'
-  | 'reveal'
-  | 'copy'
-  | 'cancel'
-  | 'remove'
-  | 'trash'
+  'pause' | 'resume' | 'retry' | 'again' | 'open' | 'reveal' | 'cancel' | 'remove' | 'trash'
 
 export type DownloadItem = DownloadState | FinishedDownload
 
@@ -28,47 +17,42 @@ export const isFailed = (item: DownloadItem): item is DownloadState =>
 /** Going, waiting or paused: stopping it deletes what it downloaded so far. */
 export const isCancellable = (item: DownloadItem): item is DownloadState =>
   !isFinished(item) && ['downloading', 'queued', 'paused'].includes(item.status)
-/** Finished, but its file is no longer where it was saved. */
+/** Finished, but its install folder is no longer where it was. */
 export const isMissing = (item: DownloadItem): boolean => isFinished(item) && !!item.missing
-/** Finished, with its file (or a torrent's own files) still there to move to the Trash. */
+/** Finished, with its install folder still there to move to the Trash. A game installed into a
+ * folder that was already there is never trashed (see trashDownload). */
 export const isTrashable = (item: DownloadItem): boolean =>
-  isDone(item) &&
-  !isMissing(item) &&
-  (item.kind !== 'torrent' || !item.folder || !isFinished(item) || !!item.downloadedFiles?.length)
+  isDone(item) && !isMissing(item) && !item.adopted
 
-/** What a failed download can do next. `fix`: its link stopped working, a fresh one carries on
- * from here. `retry`: what it saved is still there to pick up from. `again`: nothing of it can
- * be kept, so it starts over from its link (a retry with nothing saved has no partial file to
- * resume). */
-export type FailureAction = 'fix' | 'retry' | 'again'
+/** What a failed download can do next. `retry`: what it installed so far is still there to pick
+ * up from. `again`: nothing of it can be kept, so it starts over from the game's page. */
+export type FailureAction = 'retry' | 'again'
 
 export function failureAction(download: DownloadState): FailureAction {
-  if (linkExpired(download)) return 'fix'
-  return download.resumable !== false && download.bytesDownloaded > 0 ? 'retry' : 'again'
+  // An install keeps its files and plan from the start: one that can go on does, even with
+  // nothing fetched yet (it may only have been waiting for a login).
+  return download.resumable !== false ? 'retry' : 'again'
 }
 
 const appliesTo: Record<ActionId, (item: DownloadItem) => boolean> = {
   pause: (item) => !isFinished(item) && (item.status === 'downloading' || item.status === 'queued'),
   resume: (item) => !isFinished(item) && item.status === 'paused',
   retry: (item) => isFailed(item) && failureAction(item) === 'retry',
-  fix: (item) => isFailed(item) && failureAction(item) === 'fix',
   again: (item) => isFailed(item) && failureAction(item) === 'again',
   open: (item) => isDone(item) && !isMissing(item),
   reveal: (item) => (isDone(item) && !isMissing(item)) || isCancellable(item),
-  copy: (item) => /^(https?:|magnet:)/i.test(item.url),
   cancel: isCancellable,
   remove: (item) => isDone(item) || isFailed(item),
   trash: isTrashable
 }
 
 /** These make sense for one download at a time: with several selected, they aren't offered. */
-const SINGLE_ONLY: ReadonlySet<ActionId> = new Set(['fix', 'again', 'open', 'reveal'])
+const SINGLE_ONLY: ReadonlySet<ActionId> = new Set(['again', 'open', 'reveal'])
 
-/** The order they're shown in, in groups: what to do with it, its link, getting rid of it.
- * Menus put a separator between groups. */
+/** The order they're shown in, in groups: what to do with it, then getting rid of it. Menus put a
+ * separator between groups. */
 export const ACTION_GROUPS: readonly (readonly ActionId[])[] = [
-  ['pause', 'resume', 'retry', 'fix', 'again', 'open', 'reveal'],
-  ['copy'],
+  ['pause', 'resume', 'retry', 'again', 'open', 'reveal'],
   ['cancel', 'remove', 'trash']
 ]
 
@@ -91,7 +75,7 @@ export function availableActions(items: DownloadItem[]): AvailableAction[][] {
 }
 
 /** Which actions earn a button on the selection toolbar, most needed first; the rest are behind
- * More. What's needed most is the next step (pause, resume, retry, fix, start over, open), then
+ * More. What's needed most is the next step (pause, resume, retry, start over, open), then
  * getting rid of it: a download in progress is cancelled, a finished one is shown, then removed.
  * That gives each state two sensible buttons: Pause and Cancel; Resume and Cancel; Retry and
  * Remove; Open and Show in Finder; and for several finished, Remove and Move to Trash. */
@@ -99,14 +83,12 @@ export const TOOLBAR_PRIORITY: readonly ActionId[] = [
   'pause',
   'resume',
   'retry',
-  'fix',
   'again',
   'open',
   'cancel',
   'reveal',
   'remove',
-  'trash',
-  'copy'
+  'trash'
 ]
 
 /** How many go on the toolbar as buttons. */
@@ -132,14 +114,14 @@ export function splitToolbar(groups: AvailableAction[][]): {
 }
 
 /** The single button a row shows when idle: the next step for that download, if it has one. */
-export const ROW_ACTIONS: readonly ActionId[] = ['pause', 'resume', 'retry', 'fix', 'again']
+export const ROW_ACTIONS: readonly ActionId[] = ['pause', 'resume', 'retry', 'again']
 
 export function rowAction(item: DownloadItem): ActionId | null {
   return ROW_ACTIONS.find((id) => appliesTo[id](item)) ?? null
 }
 
 /** The ways out of a download from its own screen, in the order the menu has them: Cancel while
- * it's unfinished; Remove from the list, and moving its file to the Trash, after. */
+ * it's unfinished; Remove from the list, and moving its install to the Trash, after. */
 export const MANAGE_ACTIONS: readonly ActionId[] = ['cancel', 'remove', 'trash']
 
 export function manageActions(item: DownloadItem): ActionId[] {

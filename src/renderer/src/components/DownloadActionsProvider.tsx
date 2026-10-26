@@ -1,4 +1,3 @@
-import type { DownloadState } from '@shared/types'
 import { useCallback, useMemo, useState } from 'react'
 import { useAppStore } from '../store/useAppStore'
 import { describeError } from '../utils/format'
@@ -6,25 +5,23 @@ import type { ActionId, DownloadItem } from '../utils/downloadActions'
 import { ActionErrorDialog } from './ActionErrorDialog'
 import { ACTION_META } from './downloadActionMeta'
 import { ActionsContext, StateContext } from './downloadActionsContext'
-import { FixLinkDialog } from './FixLinkDialog'
 import { RemoveDialog, type RemoveMode } from './RemoveDialog'
 
 /** What can be done to a download, done: from its row, its menu, the selection toolbar and its
- * own screen alike. It owns the two questions an action can lead to (fix the link, confirm a
- * removal), so they look and behave the same wherever they're asked from. */
+ * own screen alike. It owns the question an action can lead to (confirm a removal), so it looks
+ * and behaves the same wherever it's asked from. */
 export function DownloadActionsProvider({
   children
 }: {
   children: React.ReactNode
 }): React.JSX.Element {
   const setView = useAppStore((store) => store.setView)
-  const openNewDownload = useAppStore((store) => store.openNewDownload)
+  const openGame = useAppStore((store) => store.openGame)
   const [confirmation, setConfirmation] = useState<{
     mode: RemoveMode
     items: DownloadItem[]
     clearAll: boolean
   } | null>(null)
-  const [fixing, setFixing] = useState<DownloadState | null>(null)
   const [busy, setBusy] = useState(false)
   const [failure, setFailure] = useState<{ title: string; message: string } | null>(null)
   const [dialogError, setDialogError] = useState<string | null>(null)
@@ -43,28 +40,24 @@ export function DownloadActionsProvider({
           const results = await Promise.allSettled(
             targets.map((item) =>
               id === 'pause'
-                ? window.plexo.pauseDownload(item.id)
-                : window.plexo.resumeDownload(item.id)
+                ? window.netfuse.pauseDownload(item.id)
+                : window.netfuse.resumeDownload(item.id)
             )
           )
           const failed = results.find((result) => result.status === 'rejected')
           return failed ? fail(failed.reason) : true
         }
-        case 'fix':
-          setFixing(targets[0] as DownloadState)
-          return true
         case 'again': {
-          // Nothing of it can be kept: it goes, and its link waits in New download to start over.
-          // Only once it's really gone, so the new one can't collide with what's left of it.
+          // Nothing of it can be kept: it goes, and the game's page opens to start over. Only once
+          // it's really gone, so the new one can't collide with what's left of it.
           const [item] = targets
           try {
-            await window.plexo.removeDownload(item.id)
+            await window.netfuse.removeDownload(item.id)
           } catch (cause) {
             return fail(cause)
           }
           useAppStore.getState().forgetDownload(item.id)
-          setView({ name: 'list' })
-          openNewDownload(item.url)
+          openGame(item.app.appId)
           return true
         }
         case 'open':
@@ -73,18 +66,13 @@ export function DownloadActionsProvider({
             const [item] = targets
             const found =
               id === 'open'
-                ? await window.plexo.openDownload(item.id)
-                : await window.plexo.revealDownload(item.id)
-            return found || fail('That file is no longer where it was saved.')
+                ? await window.netfuse.openDownload(item.id)
+                : await window.netfuse.revealDownload(item.id)
+            return found || fail('That game is no longer where it was installed.')
           } catch (cause) {
             return fail(cause)
           }
         }
-        case 'copy':
-          return navigator.clipboard
-            .writeText(targets.map((item) => item.url).join('\n'))
-            .then(() => true)
-            .catch(fail)
         case 'cancel':
         case 'remove':
         case 'trash':
@@ -97,7 +85,7 @@ export function DownloadActionsProvider({
           return true
       }
     },
-    [setView, openNewDownload]
+    [openGame]
   )
 
   const askClearFinished = useCallback((): void => {
@@ -116,11 +104,11 @@ export function DownloadActionsProvider({
       const gone = new Set<string>()
       let firstFailure: unknown
       if (clearAll) {
-        await window.plexo.clearHistory()
+        await window.netfuse.clearHistory()
       } else {
         for (const item of items) {
           try {
-            await window.plexo.removeDownload(item.id, { trashFile: mode === 'trash' })
+            await window.netfuse.removeDownload(item.id, { trashFile: mode === 'trash' })
             useAppStore.getState().forgetDownload(item.id)
             gone.add(item.id)
           } catch (cause) {
@@ -130,7 +118,9 @@ export function DownloadActionsProvider({
       }
       // Showing one that's gone: back to the list.
       const view = useAppStore.getState().view
-      if (view.name === 'download' && (clearAll || gone.has(view.id))) setView({ name: 'list' })
+      if (view.name === 'download' && (clearAll || gone.has(view.id))) {
+        setView({ name: 'downloads' })
+      }
       const left = items.filter((item) => !gone.has(item.id))
       if (!clearAll && left.length > 0) {
         setConfirmation({ mode, items: left, clearAll })
@@ -162,7 +152,6 @@ export function DownloadActionsProvider({
           error={dialogError}
           onConfirm={() => void confirmRemoval()}
         />
-        <FixLinkDialog download={fixing} onClose={() => setFixing(null)} />
         <ActionErrorDialog failure={failure} onClose={() => setFailure(null)} />
       </StateContext.Provider>
     </ActionsContext.Provider>

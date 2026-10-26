@@ -21,9 +21,8 @@ function makeKindPalette(name: string, label: string): KindPalette {
   }
 }
 
-// Teal / amber / steel per network, per the "Plexo v2" design — exact hex values live as
-// CSS custom properties (main.css) so dark mode reproduces the design precisely while light
-// mode gets a coherent, hand-tuned counterpart in the same hues.
+// Green / red / blue per network, the only color in a black and white window. The hex values live
+// as CSS custom properties (main.css), hand-tuned for light mode and dark in the same hues.
 export const KIND_PALETTE: Record<NetworkInterfaceKind, KindPalette> = {
   wifi: makeKindPalette('wifi', 'WIFI'),
   usb: makeKindPalette('usb', 'USB'),
@@ -32,7 +31,6 @@ export const KIND_PALETTE: Record<NetworkInterfaceKind, KindPalette> = {
   other: makeKindPalette('neutral', 'NET')
 }
 
-// The brand amber doubles as the USB network color, exactly as in the design.
 export const DANGER = 'var(--color-danger)'
 
 // The table's 20px side gutters live inside the first and last tracks (30px = 20 + the status
@@ -50,11 +48,11 @@ export const DANGER = 'var(--color-danger)'
 // leftover space; that also keeps the gap after the bar, into Share, the same fixed 12px as
 // every other column boundary — instead of Network's gap growing while Progress's stays put.
 // The 190px floor exists because every row shares this one subgrid track, collapsed and expanded
-// alike: with a floor of 0, expanding a group mounts "Stream #N · Chunk #N · <status>" rows into
+// alike: with a floor of 0, expanding a group mounts "Stream #N · <server> · <status>" rows into
 // the same column, which is routinely wider than the collapsed row's "<name> · N streams" — so
 // the track (and everything right of it) would jump wider the instant you expand. 190px already
 // covers that expanded content, so expanding never grows the track further.
-// Keep a speed value and its unit together, including torrent direction arrows. Let unusually
+// Keep a speed value and its unit together. Let unusually
 // long values grow the track rather than wrap or overflow into the adjacent byte totals.
 export const NETWORK_ROW_GRID_COLUMNS =
   '30px minmax(190px, max-content) 1fr 48px minmax(104px, max-content) 160px'
@@ -71,14 +69,14 @@ function swatch<Id extends string>(
 // kind defaults above — each ships its own on-solid text color so it's legible without having
 // to compute contrast for an arbitrary user-picked hue at runtime, in light mode and dark.
 export const NETWORK_COLOR_SWATCHES = [
-  swatch('teal', 'Teal'),
-  swatch('amber', 'Amber'),
-  swatch('steel', 'Steel'),
-  swatch('rose', 'Rose'),
+  swatch('green', 'Green'),
+  swatch('red', 'Red'),
+  swatch('blue', 'Blue'),
   swatch('violet', 'Violet'),
-  swatch('lime', 'Lime'),
+  swatch('orange', 'Orange'),
   swatch('cyan', 'Cyan'),
-  swatch('coral', 'Coral')
+  swatch('magenta', 'Magenta'),
+  swatch('slate', 'Slate')
 ] as const
 
 export type NetworkColorId = (typeof NETWORK_COLOR_SWATCHES)[number]['id']
@@ -106,16 +104,16 @@ export interface NetworkVisual extends KindPalette {
 // The swatch each kind's palette is tuned from (same hex in dark mode). Bridge/other have no
 // hue of their own — neutral grey reads as "offline" in charts — so they always take a free one.
 const KIND_SWATCH: Record<NetworkInterfaceKind, NetworkColorId | undefined> = {
-  wifi: 'teal',
-  usb: 'amber',
-  ethernet: 'steel',
+  wifi: 'green',
+  usb: 'red',
+  ethernet: 'blue',
   bridge: undefined,
   other: undefined
 }
 
 /** Gives every network exactly one color, distinct from the others while swatches last: a
  * user-picked color always wins, then each network gets its kind's hue if still free, then the
- * first unused swatch — so two USB phones never both render amber. */
+ * first unused swatch — so two USB phones never both render red. */
 export function assignNetworkColors(
   networks: Map<string, NetworkInterfaceKind>,
   preferences: NetworkPreferences
@@ -175,4 +173,4 @@ export function resolveNetworkVisual(
 }
 
 /** In px. Drawn inside the window, so popups have to keep clear of it themselves. */
-export const TITLE_BAR_HEIGHT = window.plexo.platform === 'darwin' ? 32 : 44
+export const TITLE_BAR_HEIGHT = window.netfuse.platform === 'darwin' ? 32 : 44

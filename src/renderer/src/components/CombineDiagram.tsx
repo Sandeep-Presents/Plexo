@@ -22,9 +22,9 @@ export interface CombineDiagramNetwork {
   label: string
   /** The network's current speed, shown beside its label. `undefined` or zero reads as "—". */
   speedBytesPerSec?: number
-  /** Whether the network is carrying bytes right now (an HTTP stream fetching, or a torrent peer
-   * receiving). Drives the flow animation; derived from connection status rather than speed, so
-   * the diagram agrees with the network rows. */
+  /** Whether the network is carrying bytes right now (one of its streams fetching). Drives the
+   * flow animation; derived from stream status rather than speed, so the diagram agrees with the
+   * network rows. */
   active?: boolean
 }
 
@@ -79,7 +79,7 @@ export function CombineDiagram({
               opacity={opacity}
               style={
                 flowing
-                  ? { animation: `plexo-dash ${1.1 + index * 0.2}s linear infinite` }
+                  ? { animation: `netfuse-dash ${1.1 + index * 0.2}s linear infinite` }
                   : undefined
               }
             />

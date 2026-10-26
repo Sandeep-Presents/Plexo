@@ -2,54 +2,34 @@ import { trashDownload } from './trashDownload'
 import { describeError } from '../../shared/errors'
 import { randomUUID } from 'node:crypto'
 import { lstat, readFile, readdir, rename, rm, stat, statfs, writeFile } from 'node:fs/promises'
-import { basename, dirname, isAbsolute, join, sep } from 'node:path'
+import { basename, join } from 'node:path'
 import type { BrowserWindow } from 'electron'
-import { app, Notification, powerSaveBlocker, safeStorage, shell } from 'electron'
+import { app, Notification, powerSaveBlocker, shell } from 'electron'
 import { scheduleWindow } from '../../shared/downloadSchedule'
 import { IpcChannels } from '../../shared/ipc-channels'
+import { STEAM_LOGIN_REQUIRED } from '../../shared/steam'
 import {
   DOWNLOADS_AT_ONCE,
   SPEED_HISTORY_SECONDS,
   type AppSettings,
-  type BrowserContext,
   type DownloadSchedule,
   type DownloadNetwork,
-  type DownloadState,
   type DownloadStatus,
   type DownloadUnitState,
   type DownloadUpdate,
   type FinishedDownload,
-  type HttpBlockState,
-  type HttpDownloadNetwork,
-  type HttpDownloadState,
   type NetworkInterfaceInfo,
   type NetworkStatus,
-  type HttpProbeResult,
   type StartDownloadRequest,
-  type StartHttpDownloadRequest,
-  type StartTorrentDownloadRequest,
-  type TorrentDownloadNetwork,
-  type TorrentDownloadState,
-  type TorrentFileEntry,
-  type TorrentInfo,
-  type TorrentPieceState
+  type SteamDownloadNetwork,
+  type SteamDownloadState,
+  type SteamRequestPayload
 } from '../../shared/types'
 import { Limits } from '../network/limits'
 import { loadSettings } from '../settings'
 import { addToHistory, findInHistory, removeFromHistory } from './history'
 import { testKnobs } from '../testKnobs'
-import { DownloadFile } from './downloadFile'
-import { compareSamples, HttpTransfer, pickedStreams, splittable } from './httpTransfer'
-import { normalizeEtag } from './fileVersion'
-import { ensureDirectory, pathExists, reserveDestinationPath } from './paths'
-import { planBlocks, planDownload, planPieces } from './plan'
-import { restoreBlocks, restorePieces, saveBlocks, type SavedBlocks } from './savedProgress'
-import { chosenFiles, finishedFiles, wantedPieces } from './torrent/files'
-import { probeUrl } from './probe'
-import { browserContextFrom } from './browserContext'
-import { describeTorrent, probedTorrentFile } from './torrent/metadata'
-import { TorrentDestination } from './torrent/torrentDestination'
-import { TorrentTransfer } from './torrent/torrentTransfer'
+import { claimDestinationPath, ensureDirectory, pathExists } from './paths'
 import {
   clearSpeeds,
   delay,
@@ -57,21 +37,36 @@ import {
   recomputeAggregates,
   updateSpeeds,
   updateTimeLeft,
-  type Transfer,
   type TransferHost,
-  type HttpTransferTarget,
-  type TorrentTransferTarget
+  type SteamTransferTarget
 } from './transfer'
 import type { NetworkMonitor } from '../network/interfaces'
+import { buildLayout, type SteamLayout } from '../steam/layout'
+import type { ChunkBook } from '../steam/cells'
 import {
-  compatibleInterfaces,
-  NoCompatibleRouteError,
-  resolveTargetWithin,
-  targetHost,
-  StreamConnection
-} from '../network/routes'
+  chunkBook,
+  decodeUnits,
+  encodeUnits,
+  readManifests,
+  writeManifests,
+  type SavedSteamProgress
+} from '../steam/runtime'
+import { createSteamServices, type SteamServices } from '../steam/service'
+import { SteamDestination } from '../steam/steamDestination'
+import { SteamTransfer } from '../steam/steamTransfer'
 
-interface RuntimeFields {
+// Every download, from start to history: the queue and how many run at once, the schedule, pause
+// and resume, each download's networks, saving its progress, and telling the window. Fetching is
+// its transfer's (see transfer.ts); a game's files are its destination's (SteamDestination).
+
+interface DownloadRuntime extends SteamTransferTarget {
+  kind: 'steam'
+  file: SteamDestination
+  transfer: SteamTransfer
+  layout: SteamLayout
+  book: ChunkBook
+  /** For each of the book's chunks, its unit in the layout. */
+  units: Uint32Array
   publicationPath?: string
   publicationIdentity?: { dev: number; ino: number }
   runPromise?: Promise<void>
@@ -86,10 +81,8 @@ interface RuntimeFields {
   removed: boolean
   /** Updates sent to the window so far (see DownloadUpdate). */
   sentUpdates: number
-  /** Each block as the window was last sent it, by index — what tells a changed block apart. */
-  sentUnits: (Pick<DownloadUnitState, 'status' | 'interfaceId' | 'bytesDownloaded'> & {
-    provisionalBytes?: number
-  })[]
+  /** Each cell as the window was last sent it, by index — what tells a changed cell apart. */
+  sentUnits: Pick<DownloadUnitState, 'status' | 'interfaceId' | 'bytesDownloaded'>[]
   /** The network most recently switched off: what a resume switches back on if it finds none on.
    * Not persisted: after a restart, the first network present is used instead. */
   lastSwitchedOff?: string
@@ -101,85 +94,28 @@ interface RuntimeFields {
   /** The byte count, read once a second while downloading and carried over pauses: back to the
    * newest reading PEAK_SECONDS old (see samplePeak). */
   peakReadings: { time: number; bytes: number }[]
-  /** Changes asked of a torrent's choice of files, counted: only the latest applies. */
-  fileChoices: number
 }
 
-interface HttpDownloadRuntime extends RuntimeFields, HttpTransferTarget {
-  kind: 'http'
-  transfer: Transfer
-}
-
-interface TorrentDownloadRuntime extends RuntimeFields, TorrentTransferTarget {
-  kind: 'torrent'
-  transfer: TorrentTransfer
-}
-
-type DownloadRuntime = HttpDownloadRuntime | TorrentDownloadRuntime
-
-interface PersistedDownloadBase {
+/** What manifest.json keeps of a download: its state without the cells and streams, which are
+ * worked out again, and what is needed to resume it. Never a key or token. */
+interface PersistedDownload {
+  version: 1
   savedAt: number
+  state: Omit<SteamDownloadState, 'cells' | 'streams'>
+  /** The install folder. */
   partialPath: string
   publicationPath?: string
   publicationIdentity?: { dev: number; ino: number }
-  requestPayload: StartDownloadRequest
-  /** Kept apart from requestPayload, sealed (see sealBrowser). */
-  browser?: string
-}
-
-type PersistedState =
-  Omit<HttpDownloadState, 'blocks' | 'streams'> | Omit<TorrentDownloadState, 'pieces' | 'peers'>
-
-type PersistedDownload = PersistedDownloadBase & {
-  version: 7
-  state: PersistedState
-} & SavedBlocks
-
-/** Cookies are never written in the clear. Without a keychain (Linux falls back to a fixed key)
- * they aren't saved at all, and a download resumed after a restart goes without them. */
-function sealBrowser(browser: BrowserContext): string | undefined {
-  if (!safeStorage.isEncryptionAvailable()) return undefined
-  if (process.platform === 'linux' && safeStorage.getSelectedStorageBackend() === 'basic_text') {
-    return undefined
-  }
-  // The keychain can refuse; the download is still saved, it just won't keep the sign-in.
-  try {
-    return safeStorage.encryptString(JSON.stringify(browser)).toString('base64')
-  } catch {
-    return undefined
-  }
-}
-
-function unsealBrowser(sealed: string): BrowserContext | undefined {
-  try {
-    return (
-      browserContextFrom(JSON.parse(safeStorage.decryptString(Buffer.from(sealed, 'base64')))) ??
-      undefined
-    )
-  } catch {
-    return undefined
-  }
-}
-
-/** A finished download drops its cookies: nothing will ask the server for it again. */
-function savedRequest(
-  runtime: DownloadRuntime
-): Pick<PersistedDownloadBase, 'requestPayload' | 'browser'> {
-  if (runtime.kind !== 'http' || !runtime.requestPayload.browser) {
-    return { requestPayload: runtime.requestPayload }
-  }
-  const { browser, ...requestPayload } = runtime.requestPayload
-  return {
-    requestPayload,
-    browser: runtime.state.status === 'completed' ? undefined : sealBrowser(browser)
-  }
+  requestPayload: SteamRequestPayload
+  /** Its chunks' progress (see SavedSteamProgress). */
+  steam?: SavedSteamProgress
 }
 
 const UI_UPDATE_MS = 200
 /** How often a running download takes stock (see run). */
 const TICK_MS = 500
-// Syncing a growing file can briefly monopolize a slow destination drive. Keep recovery
-// checkpoints independent of UI updates; pause and publication still force an immediate sync.
+// Syncing can briefly monopolize a slow destination drive. Keep recovery checkpoints independent
+// of UI updates; pause and publication still force an immediate sync.
 const CHECKPOINT_INTERVAL_MS = 15_000
 
 // The peak is the best speed held this many seconds: longer than a start's burst (an ISP's burst
@@ -189,7 +125,7 @@ const PEAK_SECONDS = 5
 /** Adds each network's speed to the download's history, and 0 for one no longer listed. A
  * network seen for the first time starts at 0 too, so every series is as long as the others and
  * lines up with them. */
-function sampleSpeeds(state: DownloadState): void {
+function sampleSpeeds(state: SteamDownloadState): void {
   const history = (state.speedHistory ??= {})
   const length = Object.values(history)[0]?.length ?? 0
   for (const network of state.networks) {
@@ -225,9 +161,9 @@ function samplePeak(runtime: DownloadRuntime, now: number): void {
   state.peakSpeedBytesPerSec = Math.max(state.peakSpeedBytesPerSec ?? 0, held, average)
 }
 
-function newHttpNetwork(iface: NetworkInterfaceInfo, enabled: boolean): HttpDownloadNetwork {
+function newNetwork(iface: NetworkInterfaceInfo, enabled: boolean): SteamDownloadNetwork {
   return {
-    transfer: 'http',
+    transfer: 'steam',
     id: iface.id,
     label: iface.displayName,
     kind: iface.kind,
@@ -239,57 +175,7 @@ function newHttpNetwork(iface: NetworkInterfaceInfo, enabled: boolean): HttpDown
   }
 }
 
-function newTorrentNetwork(iface: NetworkInterfaceInfo, enabled: boolean): TorrentDownloadNetwork {
-  return {
-    ...newHttpNetwork(iface, enabled),
-    transfer: 'torrent',
-    bytesUploaded: 0,
-    uploadSpeedBytesPerSec: 0
-  }
-}
-
-/** A block that needs nothing more: in, or skipped (see BlockStatus). */
-const isDone = (unit: DownloadUnitState): boolean =>
-  unit.status === 'completed' || unit.status === 'skipped'
-
-const unitsOf = (runtime: DownloadRuntime): DownloadUnitState[] =>
-  runtime.kind === 'http' ? runtime.blocks : runtime.pieces
-
-/** A torrent download's files as its state shows them, given those `chosen` (null: every one). */
-function choiceOf(chosen: Set<number> | null, total: number): TorrentDownloadState['files'] {
-  const selected = chosen ? [...chosen].sort((a, b) => a - b) : undefined
-  return { chosen: selected?.length ?? total, total, selected }
-}
-
-/** Sets each piece of `torrent` by whether a `chosen` file (null: every one) needs it: skipped
- * when none does, waiting again when one does. A piece that's in stays in, needed or not. The
- * skipped pieces' bytes, all together. As a download starts, comes back, or its choice changes. */
-function choosePieces(
-  pieces: TorrentPieceState[],
-  torrent: TorrentInfo,
-  chosen: Set<number> | null
-): number {
-  const wanted = chosen && wantedPieces(torrent.files, torrent.pieceLength, chosen)
-  let skipped = 0
-  for (const piece of pieces) {
-    if (piece.status === 'completed' || piece.rangeEnd === null) continue
-    if (!wanted || wanted[piece.index]) {
-      if (piece.status === 'skipped') piece.status = 'pending'
-      continue
-    }
-    piece.status = 'skipped'
-    piece.provisionalBytes = 0
-    skipped += piece.rangeEnd - piece.rangeStart + 1
-  }
-  return skipped
-}
-
-/** The files not `chosen`, as the torrent names them. */
-function unchosenPaths(torrent: TorrentInfo, chosen: Set<number> | null): string[] {
-  return chosen
-    ? torrent.files.filter((_, index) => !chosen.has(index)).map((file) => file.path)
-    : []
-}
+const isDone = (unit: DownloadUnitState): boolean => unit.status === 'completed'
 
 const isNotFound = (error: unknown): boolean =>
   (error as NodeJS.ErrnoException | null)?.code === 'ENOENT'
@@ -297,49 +183,20 @@ const isNotFound = (error: unknown): boolean =>
 /** A manifest this version writes, for the download in folder `id`. */
 function isCurrentManifest(value: unknown, id: string): value is PersistedDownload {
   const manifest = value as Partial<PersistedDownload> | null
-  return manifest?.version === 7 && manifest.state?.id === id
-}
-
-/**
- * Where a saved download that can't be restored kept its partial data beside its destination:
- * only what is unmistakably Plexo's, so that a damaged manifest can never point it at a real file.
- * - A `<name>.plexo` staging file, or a torrent's `<name>.plexo/` staging folder.
- * - rc.1–rc.9 (manifest version 2) claimed the final name itself as an empty file, until the
- *   download's parts were joined into it: taken while it is still empty and the download
- *   unfinished, never once it holds anything.
- */
-async function partialLeftovers(persisted: unknown): Promise<string[]> {
-  const manifest = persisted as {
-    version?: unknown
-    partialPath?: unknown
-    state?: { status?: unknown; destinationPath?: unknown }
-  } | null
-  const leftovers: string[] = []
-  const partial = manifest?.partialPath
-  if (typeof partial === 'string' && isAbsolute(partial)) {
-    if (partial.endsWith('.plexo')) leftovers.push(partial)
-    else if (dirname(partial).endsWith('.plexo')) leftovers.push(dirname(partial))
-  }
-  const placeholder = manifest?.state?.destinationPath
-  if (
-    manifest?.version === 2 &&
-    manifest.state?.status !== 'completed' &&
-    typeof placeholder === 'string' &&
-    isAbsolute(placeholder)
-  ) {
-    const found = await lstat(placeholder).catch(() => null)
-    if (found?.isFile() && found.size === 0) leftovers.push(placeholder)
-  }
-  return leftovers
+  return (
+    manifest?.version === 1 &&
+    manifest.state?.id === id &&
+    manifest.state.kind === 'steam' &&
+    manifest.requestPayload?.kind === 'steam'
+  )
 }
 
 function formatGigabytes(bytes: number): string {
   return `${(bytes / 1024 ** 3).toFixed(2)} GB`
 }
 
-/** The staging file is on the destination volume and becomes the final file by rename. */
 async function ensureDiskSpace(destinationDir: string, requiredBytes: number): Promise<void> {
-  if (requiredBytes <= 0) return // unknown size — nothing to check against
+  if (requiredBytes <= 0) return
   const stats = await statfs(destinationDir)
   const availableBytes = stats.bavail * stats.bsize
   if (availableBytes < requiredBytes) {
@@ -351,8 +208,6 @@ async function ensureDiskSpace(destinationDir: string, requiredBytes: number): P
 
 export class DownloadManager {
   private runtimes = new Map<string, DownloadRuntime>()
-  /** Downloads whose new link is being checked: two at once could both pass and both resume. */
-  private relinking = new Set<string>()
   private readonly initialization: Promise<void>
   private suspending = false
   private scheduleLoaded = false
@@ -366,11 +221,22 @@ export class DownloadManager {
   private downloadsAtOnce = DOWNLOADS_AT_ONCE.default
   /** Speed and data limits, for every download together. */
   readonly limits = new Limits(() => this.limitsChanged())
+  /** The Steam login, library and plans, and the workers that check chunks. */
+  readonly steam: SteamServices
 
   constructor(
     private getWindow: () => BrowserWindow | null,
     private networks: NetworkMonitor
   ) {
+    this.steam = createSteamServices({
+      networks,
+      limits: this.limits,
+      loginChanged: (state) => {
+        this.send(IpcChannels.steamLoginStateChanged, state)
+        if (state.status === 'logged-in') this.loggedIn()
+      },
+      progress: (progress) => this.send(IpcChannels.steamPrepareProgress, progress)
+    })
     this.initialization = Promise.all([this.restorePersistedDownloads(), this.limits.loaded]).then(
       async () => {
         // Read after recovery, including any settings saved while the manifests were loading.
@@ -435,7 +301,7 @@ export class DownloadManager {
     this.scheduleTimer = setTimeout(
       () => {
         void this.refreshSchedule()
-          .catch((error) => console.error('[plexo] schedule', error))
+          .catch((error) => console.error('[netfuse] schedule', error))
           .finally(() => this.armScheduleTimer())
       },
       boundary ? Math.max(1, Math.min(1000, boundary - now)) : 1000
@@ -465,16 +331,13 @@ export class DownloadManager {
   }
 
   /** Running downloads on Auto with `networkId` on: how many share its streams (see
-   * concurrency.ts). One that can't split runs a single stream, and a picked count is kept, so
-   * neither takes a share. */
-  private httpDownloadsOn(networkId: string): number {
+   * concurrency.ts). One with a picked count keeps it, so it takes no share. */
+  private downloadsOn(networkId: string): number {
     let count = 0
     for (const runtime of this.runtimes.values()) {
       if (
-        runtime.kind === 'http' &&
+        runtime.requestPayload.streamsPerNetwork === undefined &&
         runtime.state.status === 'downloading' &&
-        splittable(runtime.requestPayload) &&
-        pickedStreams(runtime.requestPayload) === undefined &&
         runtime.state.networks.some(
           (network) => network.id === networkId && network.status === 'on'
         )
@@ -519,6 +382,16 @@ export class DownloadManager {
       : Math.max(Date.now(), ...places.map((place) => place + 1))
   }
 
+  private send(channel: string, payload: unknown): void {
+    const window = this.getWindow()
+    if (window && !window.isDestroyed()) window.webContents.send(channel, payload)
+  }
+
+  /** Where a download keeps the manifests it installs from, beside its manifest.json. */
+  private steamManifestsPath(id: string): string {
+    return join(this.downloadDir(id), 'steam-manifests.json.gz')
+  }
+
   private downloadsRoot(): string {
     return join(app.getPath('userData'), 'downloads')
   }
@@ -531,13 +404,36 @@ export class DownloadManager {
     return join(this.downloadDir(id), 'manifest.json')
   }
 
-  /** Where a torrent download keeps its .torrent, beside its manifest. */
-  private torrentFilePath(id: string): string {
-    return join(this.downloadDir(id), 'metadata.torrent')
-  }
-
-  private runtimeFields(): RuntimeFields {
-    return {
+  private newRuntime(
+    state: SteamDownloadState,
+    requestPayload: SteamRequestPayload,
+    file: SteamDestination,
+    layout: SteamLayout,
+    book: ChunkBook,
+    units: Uint32Array
+  ): DownloadRuntime {
+    const target: SteamTransferTarget & { file: SteamDestination } = {
+      state,
+      requestPayload,
+      stop: new AbortController(),
+      file,
+      cells: book.cells,
+      meters: new Meters()
+    }
+    const host: TransferHost = {
+      networks: this.networks,
+      limits: this.limits,
+      downloadsOn: (networkId) => this.downloadsOn(networkId),
+      reconcile: () => this.reconcile(runtime),
+      failDownload: (message, discard) => this.failDownload(runtime, message, discard),
+      failNetwork: (network, message) => this.failNetwork(runtime, network, message),
+      scheduleUpdate: () => this.scheduleUpdate(runtime)
+    }
+    const runtime: DownloadRuntime = Object.assign(target, {
+      kind: 'steam' as const,
+      layout,
+      book,
+      units,
       publishing: false,
       pushScheduled: false,
       persistenceChain: Promise.resolve(),
@@ -546,68 +442,12 @@ export class DownloadManager {
       sentUnits: [],
       speedSampledAt: 0,
       peakReadings: [],
-      fileChoices: 0
-    }
-  }
-
-  private newHttpRuntime(
-    state: HttpDownloadState,
-    requestPayload: StartHttpDownloadRequest,
-    file: DownloadFile,
-    blocks: HttpBlockState[]
-  ): HttpDownloadRuntime {
-    const target: HttpTransferTarget = {
-      state,
-      requestPayload,
-      stop: new AbortController(),
-      file,
-      blocks,
-      meters: new Meters()
-    }
-    const host: TransferHost = {
-      networks: this.networks,
-      limits: this.limits,
-      downloadsOn: (networkId) => this.httpDownloadsOn(networkId),
-      reconcile: () => this.reconcile(runtime),
-      failDownload: (message, discard) => this.failDownload(runtime, message, discard),
-      failNetwork: (network, message) => this.failNetwork(runtime, network, message),
-      scheduleUpdate: () => this.scheduleUpdate(runtime)
-    }
-    const runtime: HttpDownloadRuntime = Object.assign(target, this.runtimeFields(), {
-      kind: 'http' as const,
-      transfer: new HttpTransfer(target, host)
-    })
-    return runtime
-  }
-
-  private newTorrentRuntime(
-    state: TorrentDownloadState,
-    requestPayload: StartTorrentDownloadRequest,
-    file: TorrentDestination,
-    pieces: TorrentDownloadState['pieces'],
-    torrentFile: Uint8Array
-  ): TorrentDownloadRuntime {
-    const target: TorrentTransferTarget = {
-      state,
-      requestPayload,
-      stop: new AbortController(),
-      file,
-      pieces,
-      meters: new Meters(),
-      uploadMeters: new Meters()
-    }
-    const host: TransferHost = {
-      networks: this.networks,
-      limits: this.limits,
-      downloadsOn: (networkId) => this.httpDownloadsOn(networkId),
-      reconcile: () => this.reconcile(runtime),
-      failDownload: (message, discard) => this.failDownload(runtime, message, discard),
-      failNetwork: (network, message) => this.failNetwork(runtime, network, message),
-      scheduleUpdate: () => this.scheduleUpdate(runtime)
-    }
-    const runtime: TorrentDownloadRuntime = Object.assign(target, this.runtimeFields(), {
-      kind: 'torrent' as const,
-      transfer: new TorrentTransfer(target, host, torrentFile, file.path)
+      transfer: new SteamTransfer(
+        target,
+        host,
+        { file, layout, book, units },
+        { account: this.steam.account, workers: this.steam.workers }
+      )
     })
     return runtime
   }
@@ -630,26 +470,22 @@ export class DownloadManager {
         } catch (error) {
           // No manifest, or a garbled one: nothing can bring it back. Any other read error (a
           // drive not mounted, a permission) may pass, and is left for the next launch.
-          if (error instanceof SyntaxError || isNotFound(error)) {
-            await this.discardUnrestorable(id, undefined)
-          }
+          if (error instanceof SyntaxError || isNotFound(error)) await this.discardUnrestorable(id)
           return
         }
-        // Another version's, which this one doesn't read: rc.1–rc.9 kept parts in a folder of
-        // their own (manifest version 2), later ones a different layout. Cleared, not kept forever.
-        if (!isCurrentManifest(persisted, id)) return this.discardUnrestorable(id, persisted)
+        if (!isCurrentManifest(persisted, id)) return this.discardUnrestorable(id)
         try {
           const runtime = await this.restoreOne(id, persisted)
           if (runtime) restored.push(runtime)
-          else await this.discardUnrestorable(id, persisted)
+          else await this.discardUnrestorable(id)
         } catch {
           // As above: left for a launch where it can be read.
         }
       })
     )
 
-    // Two writing one partial file would scramble it: of any that share one, the newest is kept
-    // and the others go, the file left to it.
+    // Two installing into one folder would scramble it: of any that share one, the newest is
+    // kept and the others go, the folder left to it.
     restored.sort((a, b) => b.state.startedAt - a.state.startedAt)
     const claimed = new Set<string>()
     const kept = restored.filter((runtime) => {
@@ -665,15 +501,6 @@ export class DownloadManager {
 
     await Promise.all(
       kept.map(async (runtime) => {
-        if (runtime.state.status === 'completed' && runtime.publicationIdentity) {
-          const published = await stat(runtime.state.destinationPath).catch(() => null)
-          if (
-            published?.dev === runtime.publicationIdentity.dev &&
-            published.ino === runtime.publicationIdentity.ino
-          ) {
-            await runtime.file.discardLeftover().catch(() => {})
-          }
-        }
         this.runtimes.set(runtime.state.id, runtime)
         // Finished before the relaunch (or found to be): history keeps it from here.
         if (runtime.state.status === 'completed') await this.moveToHistory(runtime)
@@ -682,30 +509,13 @@ export class DownloadManager {
     )
   }
 
-  /** A finished download leaves the list of running ones for history, with its work units: a
+  /** A finished download leaves the list of running ones for history, without its cells: a
    * download that is done needs none of them. Its saved state goes only once history has it. */
   private async moveToHistory(runtime: DownloadRuntime): Promise<void> {
-    let entry: FinishedDownload
-    if (runtime.kind === 'http') {
-      const { blocks: omittedBlocks, streams: omittedStreams, ...state } = runtime.state
-      void omittedBlocks
-      void omittedStreams
-      entry = { ...state, unitsWritten: state.totalBlocks }
-    } else {
-      const { pieces, peers: omittedPeers, ...state } = runtime.state
-      void omittedPeers
-      const written = pieces.filter((piece) => piece.status !== 'skipped').length
-      const files = await this.torrentFiles(state.id)
-      entry = {
-        ...state,
-        unitsWritten: written,
-        downloadedFiles: files
-          .filter((file) => file.chosen)
-          .map((file) =>
-            state.folder ? file.path.split(/[\\/]/).slice(1).join(sep) : basename(file.path)
-          )
-      }
-    }
+    const { cells: omittedCells, streams: omittedStreams, ...state } = runtime.state
+    void omittedCells
+    void omittedStreams
+    const entry: FinishedDownload = { ...state, unitsWritten: state.totalChunks }
     try {
       await addToHistory(structuredClone(entry))
     } catch {
@@ -718,8 +528,7 @@ export class DownloadManager {
   }
 
   private historyChanged(): void {
-    const window = this.getWindow()
-    if (window && !window.isDestroyed()) window.webContents.send(IpcChannels.historyChanged)
+    this.send(IpcChannels.historyChanged, undefined)
   }
 
   /** Forgets every finished download. Their files are the user's: they stay. */
@@ -734,123 +543,90 @@ export class DownloadManager {
     this.historyChanged()
   }
 
-  /** A saved download as this version writes it, restored paused — or null when it never can
-   * be: its progress doesn't fit its plan, or a torrent's .torrent is gone. */
+  /** A saved download as this version writes it, restored paused — or null when it never can be:
+   * its manifests are gone, or its layout or progress doesn't fit them. */
   private async restoreOne(
     id: string,
     persisted: PersistedDownload
   ): Promise<DownloadRuntime | null> {
-    const requestPayload: StartDownloadRequest =
-      persisted.requestPayload.kind === 'http' && typeof persisted.browser === 'string'
-        ? { ...persisted.requestPayload, browser: unsealBrowser(persisted.browser) }
-        : persisted.requestPayload
-    const saved: SavedBlocks = { progress: persisted.progress, complete: persisted.complete }
-    let state: DownloadState
-    let runtime: DownloadRuntime
-    if (persisted.state.kind === 'torrent' && requestPayload.kind === 'torrent') {
-      const torrentFile = await readFile(this.torrentFilePath(id)).catch((error: unknown) => {
-        if (isNotFound(error)) return null
-        throw error
-      })
-      if (!torrentFile) return null
-      const probe = await describeTorrent(torrentFile, requestPayload.url)
-      if (probe.kind !== 'torrent') return null
-      const { torrent } = probe
-      const old = persisted.state
-      const pieces = restorePieces(old, saved)
-      if (!pieces) return null
-      const chosen = chosenFiles(requestPayload.selectedFiles, torrent.files.length)
-      state = {
-        ...old,
-        networks: old.networks.map((network) => ({ ...network, uploadSpeedBytesPerSec: 0 })),
-        peers: [],
-        pieces,
-        totalPieces: pieces.length,
-        pieceLength: torrent.pieceLength,
-        files: choiceOf(chosen, torrent.files.length),
-        // Its pieces no chosen file needs are skipped again.
-        skippedBytes: choosePieces(pieces, torrent, chosen),
-        uploadSpeedBytesPerSec: 0
-      }
-      runtime = this.newTorrentRuntime(
-        state,
-        requestPayload,
-        new TorrentDestination(
-          persisted.partialPath,
-          state.totalBytes,
-          unchosenPaths(torrent, chosen),
-          torrent.files.map((file) => file.path)
-        ),
-        pieces,
-        torrentFile
-      )
-    } else if (persisted.state.kind === 'http' && requestPayload.kind === 'http') {
-      const old = persisted.state
-      const blocks = restoreBlocks(old, saved)
-      if (!blocks) return null
-      state = { ...old, streams: [], blocks, totalBlocks: blocks.length }
-      runtime = this.newHttpRuntime(
-        state,
-        requestPayload,
-        new DownloadFile(persisted.partialPath),
-        blocks
-      )
-    } else {
+    // Its layout, worked out again from the manifests it saved, every path checked anew.
+    const manifests = await readManifests(this.steamManifestsPath(id))
+    if (!manifests) return null
+    let layout: SteamLayout
+    try {
+      layout = buildLayout(manifests)
+    } catch {
       return null
     }
-    const units = unitsOf(runtime)
-    // Restore paused first so the partial file can be checked before scheduled work is queued.
+    const units = decodeUnits(persisted.steam?.units, layout)
+    if (!units) return null
+    const book = chunkBook(layout, units)
+    // Progress that doesn't fit is dropped: the chunks are fetched again, never trusted.
+    book.restore(persisted.steam?.chunks)
+    // Which files it made, for cancelling an install into an existing folder: a list that
+    // doesn't fit counts as none, so that a cancel never removes what was there before.
+    const saved = persisted.steam?.created
+    const created =
+      Array.isArray(saved) &&
+      saved.every((index) => Number.isInteger(index) && index >= 0 && index < layout.files.length)
+        ? saved
+        : []
+    const old = persisted.state
+    const state: SteamDownloadState = {
+      ...old,
+      streams: [],
+      cells: book.cells,
+      totalCells: book.cells.length,
+      totalChunks: book.count,
+      chunksDone: book.chunksDone,
+      bytesDownloaded: book.bytesDone,
+      phase: undefined
+    }
+    const runtime = this.newRuntime(
+      state,
+      persisted.requestPayload,
+      new SteamDestination(
+        persisted.partialPath,
+        layout,
+        () => state.totalBytes,
+        !!old.adopted,
+        created
+      ),
+      layout,
+      book,
+      units
+    )
+    // Restore paused first so the install folder can be checked before scheduled work is queued.
     if (state.status === 'downloading' || state.status === 'queued') {
       state.status = 'paused'
       state.pausedAt = persisted.savedAt || Date.now()
       state.queuedAt = undefined
     }
     clearSpeeds(state)
-    for (const unit of units) {
-      if (unit.status === 'downloading') unit.status = 'pending'
-      if (unit.kind === 'torrent') unit.provisionalBytes = 0
+    for (const cell of runtime.cells) {
+      if (cell.status === 'downloading') cell.status = 'pending'
     }
 
-    const file = runtime.file
     if (state.status === 'paused') {
-      const size = await file.size().catch(() => -1)
+      const there = (await runtime.file.size().catch(() => -1)) >= 0
       const publishedPath = persisted.publicationPath ?? state.destinationPath
       const published = await stat(publishedPath).catch(() => null)
-      // A torrent's folder of files: its identity below is what tells it's this download's.
-      const publishedSize = published?.isDirectory() ? state.totalBytes : (published?.size ?? -1)
-      const expected = state.totalBytes || state.bytesDownloaded
-      const sameFile =
+      // An install is in place from the start, so its folder being there says nothing: only the
+      // publication recorded after its final sync does.
+      const recorded =
         !!published &&
-        (size >= 0
-          ? await stat(file.path)
-              .then((partial) => partial.dev === published.dev && partial.ino === published.ino)
-              .catch(() => false)
-          : persisted.publicationIdentity?.dev === published.dev &&
-            persisted.publicationIdentity?.ino === published.ino)
-      if (units.every(isDone) && publishedSize === expected && sameFile) {
+        persisted.publicationIdentity?.dev === published.dev &&
+        persisted.publicationIdentity?.ino === published.ino
+      if (runtime.cells.every(isDone) && recorded) {
         state.status = 'completed'
         state.destinationPath = publishedPath
         state.fileName = basename(publishedPath)
         state.error = undefined
         state.completedAt ??= persisted.savedAt
-        if (size >= 0) await file.discardLeftover()
-      } else if (size < 0) {
+      } else if (!there) {
         state.status = 'error'
-        state.error = 'The partial download file is missing. Remove this download and start again.'
+        state.error = 'The install folder is missing. Remove this download and start again.'
         state.resumable = false
-      } else {
-        for (const unit of units) {
-          const length = unit.rangeEnd === null ? 0 : unit.rangeEnd - unit.rangeStart + 1
-          if (
-            unit.rangeStart + unit.bytesDownloaded > size ||
-            (unit.status === 'completed' && unit.bytesDownloaded !== length)
-          ) {
-            unit.status = 'pending'
-            unit.bytesDownloaded = 0
-            unit.bytesByInterface = {}
-          }
-        }
-        state.bytesDownloaded = units.reduce((sum, unit) => sum + unit.bytesDownloaded, 0)
       }
     }
 
@@ -864,152 +640,38 @@ export class DownloadManager {
     // A resumed download's last minute starts when it does, not where it stopped before the
     // relaunch; a finished one keeps its chart.
     if (state.status !== 'completed') state.speedHistory = undefined
-    recomputeAggregates(state, units)
+    recomputeAggregates(state, runtime.cells)
     return runtime
   }
 
-  /**
-   * Clears a saved download that can't be restored, rather than keep it forever: its folder here
-   * (manifest, a saved .torrent, an old version's parts/ folder), and its partial data beside the
-   * destination when that is unmistakably Plexo's (see partialLeftovers).
-   */
-  private async discardUnrestorable(id: string, persisted: unknown): Promise<void> {
-    for (const path of await partialLeftovers(persisted)) {
-      await rm(path, { recursive: true, force: true }).catch(() => {})
-    }
+  /** Clears a saved download that can't be restored, rather than keep it forever: its folder here.
+   * Its install folder is the user's, and stays. */
+  private async discardUnrestorable(id: string): Promise<void> {
     await rm(this.downloadDir(id), { recursive: true, force: true }).catch(() => {})
   }
 
-  /** A snapshot of every download: updates with every work unit in them, oldest first. */
+  /** A snapshot of every download: updates with every cell in them, oldest first. */
   async listDownloads(): Promise<DownloadUpdate[]> {
     await this.initialization
     return [...this.runtimes.values()]
       .sort((a, b) => a.state.startedAt - b.state.startedAt)
       .map((runtime) => {
-        if (runtime.kind === 'http') {
-          const { blocks, ...state } = runtime.state
-          return structuredClone({ seq: runtime.sentUpdates, state, blocks })
-        }
-        const { pieces, ...state } = runtime.state
-        return structuredClone({ seq: runtime.sentUpdates, state, pieces })
+        const { cells, ...state } = runtime.state
+        return structuredClone({ seq: runtime.sentUpdates, state, cells })
       })
   }
 
-  async start(requestPayload: StartDownloadRequest): Promise<string> {
+  /** Starts the download a plan from steamPrepare describes, or queues it when as many run as may
+   * (see downloadsAtOnce) or the schedule says not now. */
+  async start(request: StartDownloadRequest): Promise<string> {
     await this.initialization
-    if (requestPayload.kind === 'http' && requestPayload.browser !== undefined) {
-      const browser = browserContextFrom(requestPayload.browser)
-      if (!browser) throw new Error('The browser’s details for this download couldn’t be read.')
-      requestPayload = { ...requestPayload, browser }
-    }
-
     const available = await this.networks.refresh()
-    const selected = available.filter((iface) => requestPayload.interfaceIds.includes(iface.id))
+    const selected = available.filter((iface) => request.interfaceIds.includes(iface.id))
     if (selected.length === 0) {
       throw new Error('Select at least one network')
     }
-    await ensureDirectory(requestPayload.destinationDir)
     const id = randomUUID()
-    let runtime: DownloadRuntime
-    if (requestPayload.kind === 'torrent') {
-      const torrentFile = probedTorrentFile(requestPayload.infoHash)
-      if (!torrentFile) throw new Error('Add the torrent again to start downloading.')
-      const torrentProbe = await describeTorrent(torrentFile, requestPayload.url)
-      if (torrentProbe.kind !== 'torrent') throw new Error('Invalid torrent metadata')
-      const torrent = torrentProbe.torrent
-      const totalBytes = torrent.files.reduce((sum, entry) => sum + entry.length, 0)
-      const chosen = chosenFiles(requestPayload.selectedFiles, torrent.files.length)
-      const pieces = planPieces(totalBytes, torrent.pieceLength)
-      const skippedBytes = choosePieces(pieces, torrent, chosen)
-      await ensureDiskSpace(requestPayload.destinationDir, totalBytes - skippedBytes)
-      const folder = torrent.files[0].path.includes(sep)
-      const file = await TorrentDestination.create(
-        requestPayload.destinationDir,
-        requestPayload.suggestedFileName,
-        folder,
-        totalBytes,
-        unchosenPaths(torrent, chosen),
-        torrent.files.map((file) => file.path)
-      )
-      const destinationPath = file.path
-      await ensureDirectory(this.downloadDir(id))
-      await writeFile(this.torrentFilePath(id), torrentFile)
-      const state: TorrentDownloadState = {
-        id,
-        kind: 'torrent',
-        files: choiceOf(chosen, torrent.files.length),
-        folder,
-        url: requestPayload.url,
-        fileName: basename(destinationPath),
-        destinationPath,
-        totalBytes,
-        skippedBytes,
-        bytesDownloaded: 0,
-        speedBytesPerSec: 0,
-        bytesUploaded: 0,
-        uploadSpeedBytesPerSec: 0,
-        status: 'downloading',
-        networks: available.map((iface) => newTorrentNetwork(iface, selected.includes(iface))),
-        peers: [],
-        peakPeers: 0,
-        pieces,
-        totalPieces: pieces.length,
-        pieceLength: torrent.pieceLength,
-        startedAt: Date.now()
-      }
-      runtime = this.newTorrentRuntime(state, requestPayload, file, pieces, torrentFile)
-    } else {
-      const target = new URL(requestPayload.url)
-      const usable = compatibleInterfaces(
-        selected,
-        await resolveTargetWithin(targetHost(target), testKnobs.stallTimeoutMs)
-      )
-      if (usable.length === 0) throw new NoCompatibleRouteError(targetHost(target))
-      const blockSizeBytes = planDownload({
-        totalBytes: requestPayload.totalBytes,
-        splittable: requestPayload.supportsRanges,
-        networkCount: usable.length,
-        maxBlockBytes: testKnobs.blockBytes
-      }).blockSizeBytes
-      const blocks = planBlocks(requestPayload.totalBytes, blockSizeBytes)
-      await ensureDiskSpace(requestPayload.destinationDir, requestPayload.totalBytes)
-      const destinationPath = await reserveDestinationPath(
-        requestPayload.destinationDir,
-        requestPayload.suggestedFileName
-      )
-      const networks = available.map((iface) => newHttpNetwork(iface, usable.includes(iface)))
-      if (!splittable(requestPayload)) {
-        for (const network of networks) network.enabled &&= network.id === usable[0].id
-        for (const network of networks) network.status = network.enabled ? 'on' : 'off'
-      }
-      const state: HttpDownloadState = {
-        id,
-        kind: 'http',
-        url: requestPayload.url,
-        fileName: basename(destinationPath),
-        destinationPath,
-        totalBytes: requestPayload.totalBytes,
-        bytesDownloaded: 0,
-        speedBytesPerSec: 0,
-        status: 'downloading',
-        networks,
-        streams: [],
-        peakStreams: 0,
-        blocks,
-        totalBlocks: blocks.length,
-        blockSizeBytes,
-        startedAt: Date.now(),
-        ...(requestPayload.browser && {
-          fromBrowser: requestPayload.browser.name ?? 'your browser'
-        })
-      }
-      runtime = this.newHttpRuntime(
-        state,
-        requestPayload,
-        new DownloadFile(`${destinationPath}.plexo`),
-        blocks
-      )
-    }
+    const runtime = await this.newDownload(id, request, available, selected)
     // Decided only now: other starts may have taken the room while this one was set up.
     const room = this.runningCount() < this.downloadsAtOnce && this.scheduleAllowsDownloads()
     if (!room) this.enqueue(runtime, false)
@@ -1020,6 +682,102 @@ export class DownloadManager {
     if (room) this.begin(runtime)
 
     return id
+  }
+
+  /**
+   * The download a plan from steamPrepare describes: its install folder claimed, or the existing
+   * one it was checked against taken over, and its manifests saved beside its manifest.json so
+   * that a restart can work its layout out again without Steam.
+   */
+  private async newDownload(
+    id: string,
+    request: StartDownloadRequest,
+    available: NetworkInterfaceInfo[],
+    selected: NetworkInterfaceInfo[]
+  ): Promise<DownloadRuntime> {
+    // Taken out of the planner at once, so that a second click can't start it twice.
+    const prepared = this.steam.planner.take(request.planId)
+    if (!prepared) throw new Error('This choice has expired. Choose what to download again.')
+    const { plan, layout, units } = prepared
+    const adopt = prepared.request.adopt === true
+    const destinationDir = plan.destinationDir
+    await ensureDirectory(destinationDir)
+    await ensureDiskSpace(destinationDir, Math.max(0, layout.installBytes - plan.presentBytes))
+    // What was checked as already there must still be as it was, or chunks counted present
+    // might not be.
+    for (const file of prepared.checked) {
+      const info = await lstat(file.path).catch(() => null)
+      if (!info?.isFile() || info.size !== file.size || info.mtimeMs !== file.mtimeMs) {
+        throw new Error('Files in this folder changed after it was checked. Check it again.')
+      }
+    }
+
+    await ensureDirectory(this.downloadDir(id))
+    let folder: string
+    try {
+      await writeManifests(this.steamManifestsPath(id), prepared.manifests)
+      if (adopt) {
+        folder = join(destinationDir, prepared.folderName)
+        if (!(await lstat(folder).catch(() => null))?.isDirectory()) {
+          throw new Error(`There is no folder named ${prepared.folderName} to install into.`)
+        }
+      } else {
+        folder = await claimDestinationPath(destinationDir, prepared.folderName, true)
+      }
+    } catch (error) {
+      await rm(this.downloadDir(id), { recursive: true, force: true }).catch(() => {})
+      throw error
+    }
+
+    const book = chunkBook(layout, units)
+    const state: SteamDownloadState = {
+      id,
+      kind: 'steam',
+      url: `steam://app/${plan.appId}`,
+      fileName: basename(folder),
+      destinationPath: folder,
+      totalBytes: plan.downloadBytes,
+      bytesDownloaded: 0,
+      speedBytesPerSec: 0,
+      status: 'downloading',
+      networks: available.map((iface) => newNetwork(iface, selected.includes(iface))),
+      streams: [],
+      peakStreams: 0,
+      cells: book.cells,
+      totalCells: book.cells.length,
+      totalChunks: book.count,
+      chunksDone: 0,
+      app: {
+        appId: plan.appId,
+        name: plan.appName,
+        branch: prepared.branch,
+        buildId: prepared.buildId
+      },
+      depots: prepared.depots,
+      fileCount: plan.fileCount,
+      installBytes: layout.installBytes,
+      adopted: adopt || undefined,
+      phase: 'preparing',
+      startedAt: Date.now()
+    }
+    // What is saved to resume it: never the plan id, which means nothing after a restart.
+    const payload: SteamRequestPayload = {
+      kind: 'steam',
+      appId: plan.appId,
+      branch: prepared.branch,
+      depots: prepared.depots.map(({ depotId, manifestId }) => ({ depotId, manifestId })),
+      destinationDir,
+      interfaceIds: request.interfaceIds,
+      streamsPerNetwork: request.streamsPerNetwork
+    }
+    return this.newRuntime(
+      state,
+      payload,
+      new SteamDestination(folder, layout, () => state.totalBytes, adopt),
+      layout,
+      book,
+      units
+    )
   }
 
   /** Runs the download, and once the run ends makes room for the next one queued. */
@@ -1054,20 +812,15 @@ export class DownloadManager {
     }
     runtime.state.pausedAt = Date.now()
     clearSpeeds(runtime.state)
-    if (runtime.kind === 'http') {
-      for (const stream of runtime.state.streams) {
-        if (stream.status !== 'completed') {
-          stream.status = 'paused'
-        }
-        stream.currentBlockIndex = undefined
-        stream.hedge = undefined
-      }
+    for (const stream of runtime.state.streams) {
+      if (stream.status !== 'completed') stream.status = 'paused'
+      stream.currentCellIndex = undefined
+      stream.chunkReceived = undefined
+      stream.chunkBytes = undefined
+      stream.hedge = undefined
     }
-    for (const unit of unitsOf(runtime)) {
-      if (unit.status === 'downloading') {
-        unit.status = 'pending'
-      }
-      if (unit.kind === 'torrent') unit.provisionalBytes = 0
+    for (const cell of runtime.cells) {
+      if (cell.status === 'downloading') cell.status = 'pending'
     }
     runtime.transfer.reset()
     this.stopRun(runtime)
@@ -1081,120 +834,13 @@ export class DownloadManager {
     }
   }
 
-  /** Gives a download whose link stopped working (a signed link ran out, say) a fresh link to the
-   * same file, and resumes it from where it stopped. `given`: a link already checked, with the
-   * browser sign-in it came with. */
-  async relink(
-    id: string,
-    url: string,
-    given?: { probe?: HttpProbeResult; browser?: BrowserContext }
-  ): Promise<void> {
-    const runtime = this.runtimes.get(id)
-    if (runtime?.kind !== 'http') throw new Error('Only web downloads support replacing a link.')
-    const replaceable = (): boolean => {
-      const { status, resumable } = runtime.state
-      return (
-        this.runtimes.get(id) === runtime &&
-        resumable !== false &&
-        (status === 'error' || status === 'paused')
-      )
-    }
-    if (runtime.state.resumable === false) {
-      throw new Error('This download can’t resume. Start it again.')
-    }
-    if (!replaceable()) throw new Error('Pause the download before replacing its link.')
-    if (this.relinking.has(id)) throw new Error('A new link for this download is being checked.')
-    this.relinking.add(id)
-    try {
-      await this.replaceLink(runtime, url, replaceable, given)
-    } finally {
-      this.relinking.delete(id)
-    }
-  }
-
-  private async replaceLink(
-    runtime: HttpDownloadRuntime,
-    url: string,
-    replaceable: () => boolean,
-    given?: { probe?: HttpProbeResult; browser?: BrowserContext }
-  ): Promise<void> {
-    // A fresh link from the same site usually needs the same sign-in, so the old one carries over
-    // unless the browser sent a new one.
-    const browser = given?.browser ?? runtime.requestPayload.browser
-    const probe = given?.probe ?? (await probeUrl(url, browser))
-    if (probe.kind !== 'http') throw new Error('That isn’t a link to a file')
-    const { totalBytes } = runtime.state
-    if ((probe.totalBytes ?? 0) !== totalBytes) {
-      throw new Error(
-        `That link is to a different file: ${formatGigabytes(probe.totalBytes ?? 0)}, not ${formatGigabytes(totalBytes)}`
-      )
-    }
-    if (splittable(runtime.requestPayload) && !probe.supportsRanges) {
-      throw new Error(
-        'This server doesn’t support resuming downloads. Try another link to the same file.'
-      )
-    }
-    // An ETag or date from another link proves nothing about its bytes: two different files can
-    // share them. Once resumed, only a label this download hasn't seen would make it compare
-    // bytes, so they're compared now, before anything from the new link is written.
-    const verdict = await this.compareWithDisk(runtime, probe.finalUrl, browser)
-    if (verdict === 'different') {
-      throw new Error('That link is to a different file: its bytes don’t match what’s downloaded.')
-    }
-    if (verdict === 'unknown') {
-      throw new Error('Plexo couldn’t check that link against what’s downloaded. Try again.')
-    }
-    if (!replaceable()) throw new Error('The download changed while its new link was checked.')
-    runtime.requestPayload.url = probe.finalUrl
-    runtime.requestPayload.browser = browser
-    runtime.state.url = probe.finalUrl
-    await this.persistNow(runtime)
-    this.resume(runtime.state.id)
-  }
-
-  private async compareWithDisk(
-    runtime: HttpDownloadRuntime,
-    url: string,
-    browser: BrowserContext | undefined
-  ): Promise<'same' | 'different' | 'unknown'> {
-    // Nothing downloaded, nothing a different file could spoil.
-    if (!runtime.blocks.some((block) => block.bytesDownloaded > 0)) return 'same'
-    const available = await this.networks.refresh()
-    const enabled = (iface: NetworkInterfaceInfo): boolean =>
-      runtime.state.networks.some((network) => network.id === iface.id && network.enabled)
-    const network = available.find(enabled) ?? available[0]
-    if (!network) return 'unknown'
-    const connection = new StreamConnection(() => network, {
-      timeoutMs: testKnobs.stallTimeoutMs,
-      connectTimeoutMs: testKnobs.connectTimeoutMs
-    })
-    try {
-      return await compareSamples(runtime, url, browser, connection)
-    } finally {
-      connection.close()
-    }
-  }
-
-  /** A failed download this link looks like the same file as: same name, size and strong ETag.
-   * Only a suggestion for the user, who decides; relink then compares the bytes. */
-  failedMatch(probe: HttpProbeResult): { id: string; fileName: string } | undefined {
-    const strong = (etag: string | null): etag is string => etag !== null && !/^W\//i.test(etag)
-    if (!strong(probe.etag) || !probe.totalBytes) return undefined
-    const etag = normalizeEtag(probe.etag)
+  /** Downloads that stopped only for want of a login go on by themselves once there is one: one
+   * restored at launch runs before the user has had a chance to log in. */
+  private loggedIn(): void {
     for (const runtime of this.runtimes.values()) {
-      if (runtime.kind !== 'http' || runtime.state.status !== 'error') continue
-      const { requestPayload: request, state } = runtime
-      if (
-        state.resumable !== false &&
-        state.totalBytes === probe.totalBytes &&
-        request.suggestedFileName === probe.suggestedFileName &&
-        strong(request.etag) &&
-        normalizeEtag(request.etag) === etag
-      ) {
-        return { id: state.id, fileName: state.fileName }
-      }
+      const { status, error } = runtime.state
+      if (status === 'error' && error === STEAM_LOGIN_REQUIRED) this.resume(runtime.state.id)
     }
-    return undefined
   }
 
   resume(id: string): void {
@@ -1206,21 +852,18 @@ export class DownloadManager {
     void this.resumeAfterVerifying(runtime, false)
   }
 
-  // A file that changed on the server while this download was paused is caught by the first
-  // chunk request after resuming: its response is checked against the version the download
-  // started on (see runWorker), which can tell a real change from a relabelled server. Whether a
-  // network is there to resume on is the run's business: with none, it waits for one.
+  // Whether a network is there to resume on is the run's business: with none, it waits for one.
   // `byNetwork`: resumed by switching a network back on, rather than by Resume.
   private async resumeAfterVerifying(runtime: DownloadRuntime, byNetwork: boolean): Promise<void> {
-    // The paused run can still be winding down: a writer closing, a sample check in flight. A new
-    // one must not start beside it — both would go on to publish, and act on each other's streams.
+    // The paused run can still be winding down: a write finishing, a check in flight. A new one
+    // must not start beside it — both would go on to publish, and act on each other's streams.
     await runtime.runPromise
     // Just after launch the networks may not have been looked at yet.
     await this.networks.refresh()
 
     if ((await runtime.file.size().catch(() => -1)) < 0) {
       runtime.state.error =
-        'The partial download file is unavailable. Reconnect the destination drive and try again.'
+        'The install folder is unavailable. Reconnect the destination drive and try again.'
       this.pushUpdate(runtime)
       return
     }
@@ -1284,21 +927,12 @@ export class DownloadManager {
         (runtime.state.totalPausedMs || 0) + (Date.now() - runtime.state.pausedAt)
       runtime.state.pausedAt = undefined
     }
-    for (const unit of unitsOf(runtime)) {
-      if (unit.status === 'downloading') {
-        unit.status = 'pending'
-      }
-      if (unit.kind === 'torrent') unit.provisionalBytes = 0
+    for (const cell of runtime.cells) {
+      if (cell.status === 'downloading') cell.status = 'pending'
     }
-    if (runtime.kind === 'http') {
-      for (const stream of runtime.state.streams) {
-        if (stream.status !== 'completed') {
-          stream.status = 'pending'
-        }
-        stream.speedBytesPerSec = 0
-      }
-    } else {
-      runtime.state.peers.length = 0
+    for (const stream of runtime.state.streams) {
+      if (stream.status !== 'completed') stream.status = 'pending'
+      stream.speedBytesPerSec = 0
     }
     runtime.transfer.reset()
     this.pushUpdate(runtime)
@@ -1322,10 +956,6 @@ export class DownloadManager {
     const network = networks.find((entry) => entry.id === networkId)
     if (!network || network.enabled === enabled) return
     const wasLast = !enabled && !networks.some((other) => other !== network && other.enabled)
-    // A download that can't be split runs over one network: switching one on switches it over.
-    if (enabled && runtime.kind === 'http' && !splittable(runtime.requestPayload)) {
-      for (const other of networks) other.enabled = false
-    }
     network.enabled = enabled
     if (!enabled) runtime.lastSwitchedOff = network.id
     if (wasLast && status === 'downloading') {
@@ -1380,7 +1010,7 @@ export class DownloadManager {
    * crawling connection) spans the sleep. All of it starts over. */
   systemResumed(): void {
     void this.refreshSchedule().catch((error) =>
-      console.error('[plexo] schedule after wake', error)
+      console.error('[netfuse] schedule after wake', error)
     )
     const now = Date.now()
     for (const runtime of this.runtimes.values()) {
@@ -1405,69 +1035,6 @@ export class DownloadManager {
     } catch {
       // Not every desktop can be kept awake; the download runs regardless.
     }
-  }
-
-  /** A torrent download's own .torrent, read: its files never change, so they're read when
-   * needed rather than kept or sent with every update. */
-  private async torrentInfo(id: string): Promise<TorrentInfo | null> {
-    const request = this.runtimes.get(id)?.requestPayload
-    if (request?.kind !== 'torrent') return null
-    const probe = await describeTorrent(await readFile(this.torrentFilePath(id)), request.url)
-    return probe.kind === 'torrent' ? probe.torrent : null
-  }
-
-  /** A torrent download's files, each marked by whether it's chosen. */
-  async torrentFiles(id: string): Promise<TorrentFileEntry[]> {
-    const torrent = await this.torrentInfo(id)
-    const request = this.runtimes.get(id)?.requestPayload
-    if (!torrent || request?.kind !== 'torrent') return []
-    const chosen = chosenFiles(request.selectedFiles, torrent.files.length)
-    return torrent.files.map((file, index) => ({ ...file, chosen: !chosen || chosen.has(index) }))
-  }
-
-  /** Changes which of a torrent download's files it fetches, running or not, as its choice
-   * (requestPayload.selectedFiles) everything else follows from. What's in stays in: the pieces
-   * a newly chosen file needs are fetched, those no chosen file needs any more aren't. A file
-   * that's in can't be dropped: it's done, and dropping it would delete it once the download is. */
-  async chooseTorrentFiles(id: string, selected: number[]): Promise<void> {
-    const runtime = this.runtimes.get(id)
-    if (runtime?.kind !== 'torrent') throw new Error('This download has no files to choose')
-    // Ticks come quicker than the disk answers: one overtaken by a later one gives way to it.
-    const turn = ++runtime.fileChoices
-    const torrent = await this.torrentInfo(id)
-    if (!torrent) throw new Error('This download has no files to choose')
-    // Done or going: its files are what they are. Checked again after waiting on the disk.
-    const settled = (): boolean =>
-      runtime.publishing ||
-      runtime.state.status === 'completed' ||
-      runtime.state.status === 'cancelled' ||
-      this.runtimes.get(id) !== runtime
-    if (settled()) throw new Error('This download’s files can’t change now')
-
-    const chosen = chosenFiles(selected, torrent.files.length)
-    const completed = runtime.pieces.map((piece) => piece.status === 'completed')
-    const finished = finishedFiles(torrent.files, torrent.pieceLength, completed)
-    if (chosen && [...finished].some((index) => !chosen.has(index))) {
-      throw new Error('A file that’s already downloaded stays')
-    }
-    const wanted = chosen && wantedPieces(torrent.files, torrent.pieceLength, chosen)
-    let adding = 0
-    for (const piece of runtime.pieces) {
-      if (piece.status === 'skipped' && (!wanted || wanted[piece.index])) {
-        adding += piece.rangeEnd! - piece.rangeStart + 1
-      }
-    }
-    await ensureDiskSpace(runtime.requestPayload.destinationDir, adding)
-    if (settled()) throw new Error('This download’s files can’t change now')
-    if (turn !== runtime.fileChoices) return
-
-    runtime.state.files = choiceOf(chosen, torrent.files.length)
-    runtime.requestPayload.selectedFiles = runtime.state.files.selected
-    runtime.state.skippedBytes = choosePieces(runtime.pieces, torrent, chosen)
-    runtime.file.unwanted = unchosenPaths(torrent, chosen)
-    runtime.transfer.filesChosen()
-    // Sent now, ahead of the answer: the window shows the choice from the state it's sent.
-    this.pushUpdate(runtime)
   }
 
   async cancel(id: string): Promise<void> {
@@ -1507,9 +1074,7 @@ export class DownloadManager {
       await runtime.file.discard()
       await this.removePersistedDownload(runtime, false)
       runtime.state.status = 'cancelled'
-      if (runtime.kind === 'http') {
-        for (const stream of runtime.state.streams) stream.status = 'cancelled'
-      }
+      for (const stream of runtime.state.streams) stream.status = 'cancelled'
       this.pushUpdate(runtime, false)
     } catch (error) {
       runtime.removed = false
@@ -1526,7 +1091,7 @@ export class DownloadManager {
     }
   }
 
-  /** Removes a download, cancelling one under way. A finished one's file stays where it is,
+  /** Removes a download, cancelling one under way. A finished one's folder stays where it is,
    * unless `trashFile`: then it goes to the Trash, where the user can still get it back. The
    * path is the download's own, never one the window names. */
   async remove(id: string, trashFile = false): Promise<void> {
@@ -1534,7 +1099,7 @@ export class DownloadManager {
     let runtime = this.runtimes.get(id)
     if (runtime?.state.status === 'completed') {
       // Completion is shown before history is saved. Let that move finish before choosing
-      // whether to remove a live runtime or a history entry, including for torrent file removal.
+      // whether to remove a live runtime or a history entry.
       await runtime.runPromise?.catch(() => {})
       runtime = this.runtimes.get(id)
     }
@@ -1548,15 +1113,7 @@ export class DownloadManager {
       await this.cancel(id)
     }
     if (runtime) {
-      if (trashFile && runtime.state.status === 'completed') {
-        const owned =
-          runtime.kind === 'torrent'
-            ? (await this.torrentFiles(id))
-                .filter((file) => file.chosen)
-                .map((file) => file.path.split(/[\\/]/).slice(1).join(sep))
-            : undefined
-        await trashDownload(runtime.state, owned)
-      }
+      if (trashFile && runtime.state.status === 'completed') await trashDownload(runtime.state)
       this.runtimes.delete(id)
       await this.removePersistedDownload(runtime)
       if (runtime.state.status === 'completed') {
@@ -1572,29 +1129,23 @@ export class DownloadManager {
     this.historyChanged()
   }
 
-  /** Shows a download's file in its folder (while it's downloading, its `.plexo` staging file):
-   * by the download's own path, never one the window
-   * names, and only once it's checked to be there — the window's view of that can be old (the
-   * file moved or deleted since). When it isn't, the window is told to look again, and the
-   * history it gets marks it missing. */
+  /** Shows a download's folder: by the download's own path, never one the window names, and only
+   * once it's checked to be there — the window's view of that can be old (moved or deleted
+   * since). When it isn't, the window is told to look again, and the history it gets marks it
+   * missing. */
   async reveal(id: string): Promise<boolean> {
-    const runtime = this.runtimes.get(id)
-    const download = runtime?.state ?? (await findInHistory(id))
-    // Until it's published, what's on disk is its staging file (an HTTP download's
-    // `<name>.plexo`), not the path it will end up at.
-    const unfinished = runtime && runtime.state.status !== 'completed'
-    for (const path of [unfinished ? runtime.file.path : undefined, download?.destinationPath]) {
-      if (path && (await pathExists(path).catch(() => false))) {
-        shell.showItemInFolder(path)
-        return true
-      }
+    const download = this.runtimes.get(id)?.state ?? (await findInHistory(id))
+    const path = download?.destinationPath
+    if (path && (await pathExists(path).catch(() => false))) {
+      shell.showItemInFolder(path)
+      return true
     }
     this.historyChanged()
     return false
   }
 
-  /** Opens a finished download with the app the OS picks for it; a torrent's folder opens in the
-   * file manager. Like reveal, it checks the path first and false means it's no longer there. */
+  /** Opens a download's folder in the file manager. Like reveal, it checks the path first and
+   * false means it's no longer there. */
   async open(id: string): Promise<boolean> {
     const download = this.runtimes.get(id)?.state ?? (await findInHistory(id))
     const path = download?.destinationPath
@@ -1623,7 +1174,7 @@ export class DownloadManager {
   }
 
   /**
-   * Runs the download until every block is in, or it is stopped. Each TICK_MS, and whenever a
+   * Runs the download until every chunk is in, or it is stopped. Each TICK_MS, and whenever a
    * stream ends, it takes stock: speeds, stuck connections, which networks run streams (see
    * reconcile) and how many (see concurrency.ts). With no network to use, it waits for one.
    */
@@ -1632,7 +1183,6 @@ export class DownloadManager {
     runtime.transfer.reset()
     // Speeds are this run's: nothing carries over from the last one.
     runtime.meters.clear()
-    if (runtime.kind === 'torrent') runtime.uploadMeters.clear()
     const { signal } = runtime.stop
     this.reconcile(runtime)
     // One watcher per stream for its whole life. Racing every stream each tick would pile a
@@ -1652,11 +1202,11 @@ export class DownloadManager {
     if (runtime.peakReadings.at(-1)?.bytes !== runtime.state.bytesDownloaded) {
       runtime.peakReadings.push({ time: tickedAt, bytes: runtime.state.bytesDownloaded })
     }
+    // An install is written in place: what went missing from it since the last run is found
+    // before the loop below decides whether anything is left to fetch.
+    await runtime.transfer.checkFiles()
 
-    while (
-      runtime.state.status === 'downloading' &&
-      unitsOf(runtime).some((unit) => !isDone(unit))
-    ) {
+    while (runtime.state.status === 'downloading' && runtime.cells.some((cell) => !isDone(cell))) {
       await new Promise<void>((resolve, reject) => {
         wake = { resolve, reject }
         for (const worker of runtime.transfer.running()) {
@@ -1684,7 +1234,7 @@ export class DownloadManager {
       }
       runtime.transfer.tick(now)
     }
-    // The last blocks are in, or the run was stopped: its streams wind down. Its last part reads
+    // The last chunks are in, or the run was stopped: its streams wind down. Its last part reads
     // too, up to the moment it stopped (and where the next run picks up).
     samplePeak(runtime, Date.now())
     runtime.stop.abort()
@@ -1704,8 +1254,8 @@ export class DownloadManager {
 
     runtime.publishing = true
     try {
-      if (unitsOf(runtime).some((unit) => !isDone(unit))) {
-        throw new Error('Download is incomplete — refusing to publish the file')
+      if (runtime.cells.some((cell) => !isDone(cell))) {
+        throw new Error('Download is incomplete — refusing to publish it')
       }
       await this.persistNow(runtime)
       const publishedPath = await runtime.file.publish(
@@ -1713,8 +1263,8 @@ export class DownloadManager {
         runtime.state.totalBytes,
         async (candidate) => {
           runtime.publicationPath = candidate
-          const partial = await stat(runtime.file.path)
-          runtime.publicationIdentity = { dev: partial.dev, ino: partial.ino }
+          const folder = await stat(runtime.file.path)
+          runtime.publicationIdentity = { dev: folder.dev, ino: folder.ino }
           await this.persistNow(runtime, true)
         }
       )
@@ -1730,19 +1280,15 @@ export class DownloadManager {
       if (ranFor > 0) {
         runtime.state.peakSpeedBytesPerSec ??= (end!.bytes - start.bytes) / ranFor
       }
-      runtime.state.bytesDownloaded =
-        runtime.state.totalBytes -
-          (runtime.state.kind === 'torrent' ? runtime.state.skippedBytes : 0) ||
-        runtime.state.bytesDownloaded
+      runtime.state.bytesDownloaded = runtime.state.totalBytes || runtime.state.bytesDownloaded
       await this.persistNow(runtime)
-      await runtime.file.discardLeftover().catch(() => {})
-      this.notify('Download complete', `${runtime.state.fileName} has finished downloading.`)
+      this.notify('Download complete', `${runtime.state.app.name} is ready to play.`)
     } catch (error) {
       runtime.state.status = 'error'
       runtime.state.error = error instanceof Error ? error.message : String(error)
       this.notify(
         'Download failed',
-        `${runtime.state.fileName}: ${describeError(runtime.state.error)}`
+        `${runtime.state.app.name}: ${describeError(runtime.state.error)}`
       )
     }
     runtime.publishing = false
@@ -1764,11 +1310,11 @@ export class DownloadManager {
     runtime.state.status = 'error'
     runtime.state.error = message
     runtime.state.resumable = !discard
-    this.notify('Download failed', `${runtime.state.fileName}: ${describeError(message)}`)
+    this.notify('Download failed', `${runtime.state.app.name}: ${describeError(message)}`)
     this.stopRun(runtime)
   }
 
-  /** The server keeps refusing requests over this network: it stops being used until the user
+  /** The servers keep refusing requests over this network: it stops being used until the user
    * switches it off and on, it reconnects, or the download is resumed. */
   private failNetwork(runtime: DownloadRuntime, network: DownloadNetwork, message: string): void {
     network.status = 'failed'
@@ -1785,7 +1331,7 @@ export class DownloadManager {
    * Networks: every one on the computer is listed; one that turns up mid-download starts off,
    * for the user to switch on. A network the download never used is dropped once it goes.
    *
-   * Streams, while the download runs, are the transfer's (see HttpTransfer.reconcile).
+   * Streams, while the download runs, are the transfer's (see SteamTransfer.reconcile).
    */
   private reconcile(runtime: DownloadRuntime): void {
     const { state } = runtime
@@ -1793,28 +1339,16 @@ export class DownloadManager {
     // Until the monitor has looked, nothing is known to be gone.
     const known = present !== null
     if (known) {
-      if (state.kind === 'http') {
-        state.networks = state.networks.filter(
-          (network) =>
-            network.enabled ||
-            network.bytesDownloaded > 0 ||
-            present.some((iface) => iface.id === network.id) ||
-            state.streams.some((stream) => stream.interfaceId === network.id)
-        )
-      } else {
-        state.networks = state.networks.filter(
-          (network) =>
-            network.enabled ||
-            network.bytesDownloaded > 0 ||
-            network.bytesUploaded > 0 ||
-            present.some((iface) => iface.id === network.id) ||
-            state.peers.some((peer) => peer.interfaceId === network.id)
-        )
-      }
+      state.networks = state.networks.filter(
+        (network) =>
+          network.enabled ||
+          network.bytesDownloaded > 0 ||
+          present.some((iface) => iface.id === network.id) ||
+          state.streams.some((stream) => stream.interfaceId === network.id)
+      )
       for (const iface of present) {
         if (!state.networks.some((network) => network.id === iface.id)) {
-          if (state.kind === 'http') state.networks.push(newHttpNetwork(iface, false))
-          else state.networks.push(newTorrentNetwork(iface, false))
+          state.networks.push(newNetwork(iface, false))
         }
       }
     }
@@ -1842,14 +1376,14 @@ export class DownloadManager {
     if (state.status !== 'downloading' || runtime.stop.signal.aborted) return
     if (!this.scheduleAllowsDownloads()) {
       void this.pause(state.id, true).catch((error) =>
-        console.error('[plexo] schedule cutoff', error)
+        console.error('[netfuse] schedule cutoff', error)
       )
       return
     }
 
     const enabled = state.networks.filter((network) => network.enabled)
     if (enabled.length > 0 && enabled.every((network) => network.status === 'failed')) {
-      this.failDownload(runtime, enabled[0].error ?? 'No network could reach the server')
+      this.failDownload(runtime, enabled[0].error ?? 'No network could reach Steam')
       return
     }
 
@@ -1897,42 +1431,29 @@ export class DownloadManager {
     window.webContents.send(IpcChannels.downloadUpdated, this.takeUpdate(runtime))
   }
 
-  /** What the window hasn't been sent yet: the download's state, and the work units that moved. */
+  /** What the window hasn't been sent yet: the download's state, and the cells that moved. */
   private takeUpdate(runtime: DownloadRuntime): DownloadUpdate {
-    if (runtime.kind === 'http') {
-      const changed = this.changedUnits(runtime, runtime.blocks)
-      const { blocks: omittedBlocks, ...state } = runtime.state
-      void omittedBlocks
-      return structuredClone({ seq: ++runtime.sentUpdates, state, blocks: changed })
-    }
-    const changed = this.changedUnits(runtime, runtime.pieces)
-    const { pieces: omittedPieces, ...state } = runtime.state
-    void omittedPieces
-    return structuredClone({ seq: ++runtime.sentUpdates, state, pieces: changed })
-  }
-
-  private changedUnits<T extends DownloadUnitState>(runtime: DownloadRuntime, units: T[]): T[] {
     const sent = runtime.sentUnits
-    const changed: T[] = []
-    for (const unit of units) {
-      const last = sent[unit.index]
+    const changed: DownloadUnitState[] = []
+    for (const cell of runtime.cells) {
+      const last = sent[cell.index]
       if (
-        last?.status === unit.status &&
-        last.interfaceId === unit.interfaceId &&
-        last.bytesDownloaded === unit.bytesDownloaded &&
-        last.provisionalBytes === (unit.kind === 'torrent' ? unit.provisionalBytes : undefined)
+        last?.status === cell.status &&
+        last.interfaceId === cell.interfaceId &&
+        last.bytesDownloaded === cell.bytesDownloaded
       ) {
         continue
       }
-      sent[unit.index] = {
-        status: unit.status,
-        interfaceId: unit.interfaceId,
-        bytesDownloaded: unit.bytesDownloaded,
-        provisionalBytes: unit.kind === 'torrent' ? unit.provisionalBytes : undefined
+      sent[cell.index] = {
+        status: cell.status,
+        interfaceId: cell.interfaceId,
+        bytesDownloaded: cell.bytesDownloaded
       }
-      changed.push(unit)
+      changed.push(cell)
     }
-    return changed
+    const { cells: omittedCells, ...state } = runtime.state
+    void omittedCells
+    return structuredClone({ seq: ++runtime.sentUpdates, state, cells: changed })
   }
 
   private schedulePersistence(runtime: DownloadRuntime): void {
@@ -1968,31 +1489,34 @@ export class DownloadManager {
         const dir = this.downloadDir(runtime.state.id)
         const path = this.manifestPath(runtime.state.id)
         const temporaryPath = `${path}.tmp`
-        let state: PersistedState
-        if (runtime.kind === 'http') {
-          const { blocks: omittedBlocks, streams: omittedStreams, ...rest } = runtime.state
-          void omittedBlocks
-          void omittedStreams
-          state = rest
-        } else {
-          const { pieces: omittedPieces, peers: omittedPeers, ...rest } = runtime.state
-          void omittedPieces
-          void omittedPeers
-          state = rest
-        }
+        const { cells: omittedCells, streams: omittedStreams, ...state } = runtime.state
+        void omittedCells
+        void omittedStreams
+        // Taken before the sync below: a chunk done meanwhile is saved at the next checkpoint,
+        // never ahead of its data.
         const persisted: PersistedDownload = {
-          version: 7,
+          version: 1,
           savedAt: Date.now(),
           state: structuredClone(state),
-          ...saveBlocks(unitsOf(runtime)),
           partialPath: runtime.file.path,
           publicationPath: runtime.publicationPath,
           publicationIdentity: runtime.publicationIdentity,
-          ...savedRequest(runtime)
+          requestPayload: runtime.requestPayload,
+          steam: {
+            chunks: runtime.book.save(),
+            created: [...runtime.file.created],
+            units:
+              runtime.units.length === runtime.layout.units.length
+                ? undefined
+                : encodeUnits(runtime.units)
+          }
         }
-        if (['downloading', 'paused', 'queued'].includes(runtime.state.status)) {
-          await runtime.file.sync()
-        }
+        // A download saved with an error is resumed from what it saved, with no check of what is
+        // on disk (see SteamTransfer): its chunks are synced too, unless it can't be resumed.
+        const resumable =
+          ['downloading', 'paused', 'queued'].includes(runtime.state.status) ||
+          (runtime.state.status === 'error' && runtime.state.resumable !== false)
+        if (resumable) await runtime.file.sync()
         await ensureDirectory(dir)
         await writeFile(temporaryPath, JSON.stringify(persisted), 'utf-8')
         await rename(temporaryPath, path)
@@ -2010,12 +1534,9 @@ export class DownloadManager {
     runtime.removed = true
     if (runtime.persistenceTimer) clearTimeout(runtime.persistenceTimer)
     await runtime.persistenceChain.catch(() => {})
-    // A finished download is the user's now: only what's left of it goes.
-    if (discardPartial) {
-      const file = runtime.file
-      await (runtime.state.status === 'completed' ? file.discardLeftover() : file.discard()).catch(
-        () => {}
-      )
+    // A finished download is the user's now: only an unfinished one's install goes.
+    if (discardPartial && runtime.state.status !== 'completed') {
+      await runtime.file.discard().catch(() => {})
     }
     await rm(this.downloadDir(runtime.state.id), { recursive: true, force: true })
   }
