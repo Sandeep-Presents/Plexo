@@ -219,4 +219,4 @@ Steam is a trademark of Valve Corporation. NetFuse isn't affiliated with or endo
 
 ## License
 
-[MIT](LICENSE), copyright 2026 MerikhSS and the NetFuse contributors, and Anmol Kapil for Plexo.
+[MIT](LICENSE)
