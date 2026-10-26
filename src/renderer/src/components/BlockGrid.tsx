@@ -31,10 +31,9 @@ const GRID_INSET_PX = 3
 // Rows drawn beyond the visible ones on each side, so a scroll doesn't show blank rows first.
 const BUFFER_ROWS = 2
 
-// A cell whose bytes can't be traced to a network must not borrow a network's color: the brand
-// amber IS the USB network's color (--color-accent and --color-usb are the same hex), so the old
-// accent fallback rendered every unattributed cell as though the USB network had downloaded it.
-// Unknown provenance reads as neutral gray instead, which is honest and impossible to misread.
+// A cell whose bytes can't be traced to a network must not borrow a network's color: it would
+// read as that network's work. Unknown provenance reads as neutral gray instead, which is honest
+// and impossible to misread.
 const UNATTRIBUTED_SOLID = 'var(--text-tertiary)'
 const UNATTRIBUTED_BG = 'var(--track-bg)'
 

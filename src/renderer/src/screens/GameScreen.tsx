@@ -158,7 +158,7 @@ function StateCard({ state }: { state: GameState }): React.JSX.Element | null {
         {going ? (
           <div className="h-1.5 overflow-hidden rounded-full bg-muted">
             <div
-              className="h-full rounded-full bg-[var(--color-wifi)] transition-[width] duration-200"
+              className="h-full rounded-full bg-foreground transition-[width] duration-200"
               style={{ width: `${percent}%` }}
             />
           </div>

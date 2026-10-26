@@ -48,12 +48,12 @@ export function CompleteScreen({
       </div>
       <HeroBand>
         <div className="flex items-center gap-[18px]">
-          <div className="flex size-11 shrink-0 items-center justify-center rounded-full border border-[var(--color-wifi-border)] bg-[var(--color-wifi-bg)]">
+          <div className="flex size-11 shrink-0 items-center justify-center rounded-full border border-[var(--border-strong)] bg-secondary">
             <svg viewBox="0 0 24 24" className="size-[21px]" aria-hidden="true">
               <path
                 d="M5,13 L10,18 L19,7"
                 fill="none"
-                stroke="var(--color-wifi)"
+                stroke="var(--text)"
                 strokeWidth={2.4}
                 strokeLinecap="round"
                 strokeLinejoin="round"

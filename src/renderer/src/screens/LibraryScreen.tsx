@@ -284,7 +284,7 @@ const GameCard = memo(function GameCard({
             <div
               className={cn(
                 'h-full transition-[width] duration-200',
-                state.kind === 'downloading' ? 'bg-[var(--color-wifi)]' : 'bg-white/70'
+                state.kind === 'downloading' ? 'bg-white' : 'bg-white/50'
               )}
               style={{ width: `${state.percent}%` }}
             />

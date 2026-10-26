@@ -459,7 +459,7 @@ export function InstallOptions({
           <div className="flex flex-col gap-1.5 rounded-lg border-[0.5px] border-border bg-card px-3 py-2 text-[12.5px]">
             {start.plan.warnings.map((warning) => (
               <div key={warning} className="flex items-start gap-2">
-                <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-[var(--color-usb-text)]" />
+                <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-foreground" />
                 {warning}
               </div>
             ))}

@@ -3,15 +3,16 @@ import { useState } from 'react'
 
 // A game's pictures, as the main process keeps them (see main/steam/art.ts). Not every game has
 // every picture: an old one may have no portrait capsule, a small one no banner. Each falls back
-// to what there is, and failing everything to the game's name on a color of its own.
+// to what there is, and failing everything to the game's name on a gray of its own.
 
 type ArtKind = 'capsule' | 'header' | 'hero'
 
 const artUrl = (appId: number, kind: ArtKind): string => `game-art://steam/${appId}/${kind}`
 
-/** A color for a game with no picture, the same every time for the same game. */
-function placeholderHue(appId: number): number {
-  return (appId * 47) % 360
+/** A shade of gray for a game with no picture, the same every time for the same game: the window
+ * is black and white, and the games' own pictures are its color. */
+function placeholderShade(appId: number): number {
+  return (appId * 47) % 12
 }
 
 function Placeholder({
@@ -23,12 +24,12 @@ function Placeholder({
   name: string
   small?: boolean
 }): React.JSX.Element {
-  const hue = placeholderHue(appId)
+  const shade = placeholderShade(appId)
   return (
     <div
       className="flex size-full items-end p-3"
       style={{
-        background: `linear-gradient(160deg, hsl(${hue} 45% 38%), hsl(${(hue + 40) % 360} 50% 22%))`
+        background: `linear-gradient(160deg, hsl(0 0% ${24 + shade}%), hsl(0 0% ${6 + shade / 2}%))`
       }}
     >
       {/* Too small to read: the name is beside it. */}
@@ -93,13 +94,13 @@ export function GameCapsule({
 /** The wide banner across the top of a game's page; its header, blurred, when it has none. */
 export function GameHero({ appId }: { appId: number }): React.JSX.Element {
   const [kind, setKind] = useState<ArtKind | null>('hero')
-  const hue = placeholderHue(appId)
+  const shade = placeholderShade(appId)
   return (
     <div
       aria-hidden
       className="absolute inset-0 overflow-hidden"
       style={{
-        background: `linear-gradient(120deg, hsl(${hue} 40% 30%), hsl(${(hue + 40) % 360} 45% 16%))`
+        background: `linear-gradient(120deg, hsl(0 0% ${18 + shade}%), hsl(0 0% ${4 + shade / 2}%))`
       }}
     >
       {kind !== null && (

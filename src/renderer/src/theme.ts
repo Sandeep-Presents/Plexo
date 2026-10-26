@@ -21,9 +21,8 @@ function makeKindPalette(name: string, label: string): KindPalette {
   }
 }
 
-// Teal / amber / steel per network, per the "v2" design — exact hex values live as
-// CSS custom properties (main.css) so dark mode reproduces the design precisely while light
-// mode gets a coherent, hand-tuned counterpart in the same hues.
+// Green / red / blue per network, the only color in a black and white window. The hex values live
+// as CSS custom properties (main.css), hand-tuned for light mode and dark in the same hues.
 export const KIND_PALETTE: Record<NetworkInterfaceKind, KindPalette> = {
   wifi: makeKindPalette('wifi', 'WIFI'),
   usb: makeKindPalette('usb', 'USB'),
@@ -32,7 +31,6 @@ export const KIND_PALETTE: Record<NetworkInterfaceKind, KindPalette> = {
   other: makeKindPalette('neutral', 'NET')
 }
 
-// The brand amber doubles as the USB network color, exactly as in the design.
 export const DANGER = 'var(--color-danger)'
 
 // The table's 20px side gutters live inside the first and last tracks (30px = 20 + the status
@@ -71,14 +69,14 @@ function swatch<Id extends string>(
 // kind defaults above — each ships its own on-solid text color so it's legible without having
 // to compute contrast for an arbitrary user-picked hue at runtime, in light mode and dark.
 export const NETWORK_COLOR_SWATCHES = [
-  swatch('teal', 'Teal'),
-  swatch('amber', 'Amber'),
-  swatch('steel', 'Steel'),
-  swatch('rose', 'Rose'),
+  swatch('green', 'Green'),
+  swatch('red', 'Red'),
+  swatch('blue', 'Blue'),
   swatch('violet', 'Violet'),
-  swatch('lime', 'Lime'),
+  swatch('orange', 'Orange'),
   swatch('cyan', 'Cyan'),
-  swatch('coral', 'Coral')
+  swatch('magenta', 'Magenta'),
+  swatch('slate', 'Slate')
 ] as const
 
 export type NetworkColorId = (typeof NETWORK_COLOR_SWATCHES)[number]['id']
@@ -106,16 +104,16 @@ export interface NetworkVisual extends KindPalette {
 // The swatch each kind's palette is tuned from (same hex in dark mode). Bridge/other have no
 // hue of their own — neutral grey reads as "offline" in charts — so they always take a free one.
 const KIND_SWATCH: Record<NetworkInterfaceKind, NetworkColorId | undefined> = {
-  wifi: 'teal',
-  usb: 'amber',
-  ethernet: 'steel',
+  wifi: 'green',
+  usb: 'red',
+  ethernet: 'blue',
   bridge: undefined,
   other: undefined
 }
 
 /** Gives every network exactly one color, distinct from the others while swatches last: a
  * user-picked color always wins, then each network gets its kind's hue if still free, then the
- * first unused swatch — so two USB phones never both render amber. */
+ * first unused swatch — so two USB phones never both render red. */
 export function assignNetworkColors(
   networks: Map<string, NetworkInterfaceKind>,
   preferences: NetworkPreferences

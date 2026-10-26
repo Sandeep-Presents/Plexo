@@ -510,7 +510,7 @@ function UsageBar({
   period?: DataLimitPeriod
 }): React.JSX.Element {
   const reached = used >= limit
-  const color = reached ? 'var(--color-danger)' : 'var(--color-wifi)'
+  const color = reached ? 'var(--color-danger)' : 'var(--text)'
   return (
     <div className="flex items-center gap-3">
       <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted">

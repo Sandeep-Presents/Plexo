@@ -192,7 +192,7 @@ export const DownloadingScreen = memo(function DownloadingScreen({
     chipOptions.length > 0 ? chipOptions[chipModeIndex % chipOptions.length] : null
 
   const statusBadge = isPaused
-    ? { label: isQueued ? 'QUEUED' : 'PAUSED', palette: KIND_PALETTE.usb }
+    ? { label: isQueued ? 'QUEUED' : 'PAUSED', palette: KIND_PALETTE.other }
     : null
 
   const throughputStatusLabel = isPaused ? null : `LAST ${SPEED_HISTORY_SECONDS}S`
@@ -236,7 +236,7 @@ export const DownloadingScreen = memo(function DownloadingScreen({
                           <span
                             role="img"
                             aria-label="Slow drive"
-                            className="inline-flex text-[var(--swatch-amber)]"
+                            className="inline-flex text-foreground"
                           >
                             <AlertTriangle aria-hidden className="size-3" />
                           </span>
@@ -360,7 +360,7 @@ export const DownloadingScreen = memo(function DownloadingScreen({
               {totalRetries > 0 && (
                 <>
                   <Dot />
-                  <span className="text-[var(--color-usb)]">
+                  <span className="text-foreground">
                     {totalRetries} {totalRetries === 1 ? 'retry' : 'retries'}
                   </span>
                 </>

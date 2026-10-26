@@ -24,7 +24,7 @@ export function ErrorScreen({ download }: { download: DownloadState }): React.JS
           <div
             className={`flex size-12 shrink-0 items-center justify-center rounded-full border ${
               cancelled
-                ? 'border-[var(--color-usb-border)] bg-[var(--color-usb-bg)]'
+                ? 'border-[var(--border-strong)] bg-secondary'
                 : 'border-[var(--color-danger-border)] bg-[var(--color-danger-bg)]'
             }`}
           >
@@ -35,7 +35,7 @@ export function ErrorScreen({ download }: { download: DownloadState }): React.JS
                   cy="12"
                   r="9"
                   fill="none"
-                  stroke="var(--color-usb-text)"
+                  stroke="var(--text-secondary)"
                   strokeWidth="2"
                 />
                 <line
@@ -43,7 +43,7 @@ export function ErrorScreen({ download }: { download: DownloadState }): React.JS
                   y1="12"
                   x2="16"
                   y2="12"
-                  stroke="var(--color-usb-text)"
+                  stroke="var(--text-secondary)"
                   strokeWidth="2.4"
                   strokeLinecap="round"
                 />
